@@ -8,10 +8,10 @@ const functions = require("firebase-functions");
 //   response.send("Hello from Firebase!");
 // });
 
-import { initializeApp, applicationDefault } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { getAuth } from "firebase-admin/auth";
-import { getMessaging } from "firebase-admin/messaging";
+const { initializeApp, applicationDefault } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getMessaging } = require("firebase-admin/messaging");
 
 // ---------------- FIREBASE INIT ----------------
 if (!global._firebaseApp) {
@@ -43,7 +43,6 @@ async function verifyOTP(phone, otp) {
 
 // ---------------- NOTIFICATION HELPERS ----------------
 async function notifyCounterparty(counterpartyGst, eventType, payload) {
-  // Fetch counterparty org doc to see webhook or fcm token
   try {
     const orgDoc = await db.collection("orgs").doc(counterpartyGst).get();
     if (!orgDoc.exists) return { ok: false, reason: "counterparty not registered" };
@@ -59,17 +58,14 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
     // 1) Webhook (preferred)
     if (orgData && orgData.webhook_url) {
       try {
-        // global fetch is available in Vercel / Node 18+
         await fetch(orgData.webhook_url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(notifPayload),
-          // consider adding authentication headers (HMAC) in prod
         });
         return { ok: true, via: "webhook" };
       } catch (err) {
         console.warn("Webhook notify failed:", err.message || err);
-        // continue to try FCM
       }
     }
 
@@ -118,7 +114,7 @@ async function requireAuth(req, res) {
 }
 
 // ---------------- MAIN HANDLER ----------------
-export default async function handler(req, res) {
+async function handler(req, res) {
   const { resource, action, id, account_id, gst_number, otp } = req.query;
 
   try {
@@ -142,7 +138,6 @@ export default async function handler(req, res) {
       const otpValid = await verifyOTP(gstData.phone, otp);
       if (!otpValid) return res.status(401).json({ error: "Invalid OTP" });
 
-      // Create or get Firebase user where uid == GST
       let user;
       try {
         user = await auth.getUser(gst_number);
@@ -166,10 +161,9 @@ export default async function handler(req, res) {
     // ---------- ALL OTHER RESOURCES REQUIRE AUTH ----------
     const user = await requireAuth(req, res);
     if (!user) return;
-    const orgId = user.uid; // GST as orgId
+    const orgId = user.uid;
 
     switch (resource) {
-      // ---------------- ITEMS ----------------
       case "items":
         if (req.method === "POST" && action === "create") {
           const data = { ...req.body, created_at: new Date().toISOString() };
@@ -182,12 +176,10 @@ export default async function handler(req, res) {
         }
         break;
 
-      // ---------------- ACCOUNTS ----------------
       case "accounts":
         if (req.method === "POST" && action === "create") {
           const data = { ...req.body, created_at: new Date().toISOString() };
           const ref = await db.collection("orgs").doc(orgId).collection("accounts").add(data);
-          // initialize a ledger doc for this account under org's ledgers collection
           await db.collection("orgs").doc(orgId).collection("ledgers").doc(ref.id).set({ entries: [] });
           return res.status(201).json({ id: ref.id });
         }
@@ -197,14 +189,12 @@ export default async function handler(req, res) {
         }
         break;
 
-      // ---------------- INVOICE REQUESTS ----------------
       case "invoice_requests":
         if (req.method === "POST" && action === "create") {
           const { to_account, amount, description } = req.body;
           if (!to_account || typeof amount !== "number") {
             return res.status(400).json({ error: "to_account and numeric amount required" });
           }
-
           const data = {
             from_org: orgId,
             to_org: to_account,
@@ -215,7 +205,6 @@ export default async function handler(req, res) {
           };
           const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
 
-          // Ledger entry for sender org (under sender's ledgers collection, doc = counterparty GST)
           await db.collection("orgs").doc(orgId).collection("ledgers").doc(to_account).set({
             entries: FieldValue.arrayUnion({
               id: `inv_${ref.id}`,
@@ -229,7 +218,6 @@ export default async function handler(req, res) {
             })
           }, { merge: true });
 
-          // Ledger entry for counterparty org if registered (doc = sender GST)
           const counterpartyDoc = await db.collection("orgs").doc(to_account).get();
           if (counterpartyDoc.exists) {
             await db.collection("orgs").doc(to_account).collection("ledgers").doc(orgId).set({
@@ -245,7 +233,6 @@ export default async function handler(req, res) {
               })
             }, { merge: true });
 
-            // ---- Create/Update network edge ----
             const edgeId = orgId < to_account ? `${orgId}_${to_account}` : `${to_account}_${orgId}`;
             await db.collection("network_edges").doc(edgeId).set({
               a: orgId,
@@ -255,7 +242,6 @@ export default async function handler(req, res) {
             }, { merge: true });
           }
 
-          // ---- Notify counterparty (webhook or FCM) ----
           const notifyPayload = {
             invoice_id: ref.id,
             from: orgId,
@@ -263,7 +249,6 @@ export default async function handler(req, res) {
             amount,
             description: description || ""
           };
-          // fire-and-forget, but capture result for logging
           notifyCounterparty(to_account, "invoice_request_created", notifyPayload)
             .then(r => console.log("notify result:", r))
             .catch(e => console.warn("notify error:", e));
@@ -277,7 +262,6 @@ export default async function handler(req, res) {
         }
         break;
 
-      // ---------------- LEDGER ----------------
       case "ledger":
         if (req.method === "GET" && action === "get") {
           if (!account_id) return res.status(400).json({ error: "account_id required" });
@@ -287,10 +271,8 @@ export default async function handler(req, res) {
         }
         break;
 
-      // ---------------- NETWORK GRAPH ----------------
       case "network":
         if (req.method === "GET" && action === "list_edges") {
-          // return edges where this org participates (either side)
           const q1 = await db.collection("network_edges").where("a", "==", orgId).get();
           const q2 = await db.collection("network_edges").where("b", "==", orgId).get();
           const edges = [
@@ -312,3 +294,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message || String(error) });
   }
 }
+
+exports.handler = functions.https.onRequest(handler);
