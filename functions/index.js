@@ -157,6 +157,11 @@ async function handler(req, res) {
       const token = await auth.createCustomToken(gst_number);
       return res.status(200).json({ token });
     }
+    // catch (err) {
+    //   console.error("GST login error:", err);
+    //   return res.status(500).json({ error: "GST login failed" });
+    // }
+
 
     // ---------- ALL OTHER RESOURCES REQUIRE AUTH ----------
     const user = await requireAuth(req, res);
