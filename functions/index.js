@@ -29,7 +29,7 @@ async function verifyGST(gst_number) {
     legal_name: "Demo Org Pvt Ltd",
     email: "accounts@demo.com",
     phone: "+919876543210",
-    state: "Maharashtra"
+    state: "Maharashtra",
   };
 }
 async function sendOTP(phone) {
@@ -52,7 +52,7 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
     const notifPayload = {
       event: eventType,
       timestamp: new Date().toISOString(),
-      data: payload
+      data: payload,
     };
 
     // 1) Webhook (preferred)
@@ -76,12 +76,12 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
           token: orgData.fcm_token,
           notification: {
             title: `New ${eventType}`,
-            body: payload.description ? String(payload.description).slice(0, 120) : `Amount: ${payload.amount || ""}`
+            body: payload.description ? String(payload.description).slice(0, 120) : `Amount: ${payload.amount || ""}`,
           },
           data: {
             event: eventType,
-            payload: JSON.stringify(payload)
-          }
+            payload: JSON.stringify(payload),
+          },
         };
         await messaging.send(message);
         return { ok: true, via: "fcm" };
@@ -114,10 +114,11 @@ async function requireAuth(req, res) {
 }
 
 // ---------------- MAIN HANDLER ----------------
-async function handler(req, res) {
-  const { resource, action, id, account_id, gst_number, otp } = req.query;
 
+async function handler(req, res) {
   try {
+    const { resource, action, account_id, gst_number, otp } = req.query;
+
     // ---------- GST LOGIN ----------
     if (resource === "gst_login") {
       if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
@@ -138,14 +139,14 @@ async function handler(req, res) {
       const otpValid = await verifyOTP(gstData.phone, otp);
       if (!otpValid) return res.status(401).json({ error: "Invalid OTP" });
 
-      let user;
+      // let user;
       try {
         user = await auth.getUser(gst_number);
       } catch {
         user = await auth.createUser({
           uid: gst_number,
           email: gstData.email,
-          displayName: gstData.legal_name
+          displayName: gstData.legal_name,
         });
         await db.collection("orgs").doc(gst_number).set({
           gst_number,
@@ -154,17 +155,14 @@ async function handler(req, res) {
         });
       }
 
+
       const token = await auth.createCustomToken(gst_number);
       return res.status(200).json({ token });
     }
-    // catch (err) {
-    //   console.error("GST login error:", err);
-    //   return res.status(500).json({ error: "GST login failed" });
-    // }
 
 
     // ---------- ALL OTHER RESOURCES REQUIRE AUTH ----------
-    const user = await requireAuth(req, res);
+    let user = await requireAuth(req, res);
     if (!user) return;
     const orgId = user.uid;
 
@@ -254,9 +252,7 @@ async function handler(req, res) {
             amount,
             description: description || ""
           };
-          notifyCounterparty(to_account, "invoice_request_created", notifyPayload)
-            .then(r => console.log("notify result:", r))
-            .catch(e => console.warn("notify error:", e));
+          notifyCounterparty(to_account, "invoice_request_created", notifyPayload).then(r => console.log("notify result:", r)).catch(e => console.warn("notify error:", e));
 
           return res.status(201).json({ id: ref.id });
         }
@@ -293,11 +289,10 @@ async function handler(req, res) {
     }
 
     return res.status(405).json({ error: "Method not allowed or missing action" });
-
-  } catch (error) {
-    console.error("Handler error:", error);
-    return res.status(500).json({ error: error.message || String(error) });
+  } catch (err) {
+    console.error("Handler error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 }
-
 exports.handler = functions.https.onRequest(handler);
+
