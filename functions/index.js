@@ -141,9 +141,9 @@ async function handler(req, res) {
 
       // let user;
       try {
-        user = await auth.getUser(gst_number);
+        await auth.getUser(gst_number);
       } catch {
-        user = await auth.createUser({
+        await auth.createUser({
           uid: gst_number,
           email: gstData.email,
           displayName: gstData.legal_name,
