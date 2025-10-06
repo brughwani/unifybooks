@@ -162,7 +162,7 @@ async function handler(req, res) {
 
 
     // ---------- ALL OTHER RESOURCES REQUIRE AUTH ----------
-    let user = await requireAuth(req, res);
+    const user = await requireAuth(req, res);
     if (!user) return;
     const orgId = user.uid;
 
