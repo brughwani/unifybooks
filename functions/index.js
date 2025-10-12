@@ -12,6 +12,8 @@ const { initializeApp, applicationDefault } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 const { getMessaging } = require("firebase-admin/messaging");
+const fetch = require("node-fetch"); // <-- ADD THIS LINE
+
 
 // ---------------- FIREBASE INIT ----------------
 if (!global._firebaseApp) {
