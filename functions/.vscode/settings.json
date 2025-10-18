@@ -3,11 +3,9 @@
     "editor.formatOnSave": false,
     // Instead, we will use the more specific "code actions on save" feature.
     // This tells VS Code to run ESLint to fix issues on save.
-    "editor.codeActionsOnSave": [
-        {
-            "source.fixAll.eslint": true
-        }
-    ],
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": true
+    },
     // Tell the ESLint extension to validate JavaScript files.
     "eslint.validate": [
         "javascript"

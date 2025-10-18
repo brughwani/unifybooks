@@ -4,8 +4,8 @@ const { getAuth } = require("firebase-admin/auth");
 const { getMessaging } = require("firebase-admin/messaging");
 
 if (!global._firebaseApp) {
-    initializeApp({ credential: applicationDefault() });
-    global._firebaseApp = true;
+  initializeApp({ credential: applicationDefault() });
+  global._firebaseApp = true;
 }
 
 const db = getFirestore();
