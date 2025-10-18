@@ -11,6 +11,12 @@ async function verifyGST(gst_number) {
         state: "Maharashtra",
     };
 }
+
+/**
+ * Sends an OTP to the given phone number for GST login.
+ * Note: This is a mock implementation and should be replaced with a real Twilio/MSG91 integration in production.
+ * @param {string} phone - The phone number to send the OTP to.
+ */
 async function sendOTP(phone) {
     // Integrate Twilio/MSG91 in production
     console.log(`Sending OTP to ${phone}`);

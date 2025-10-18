@@ -1,8 +1,21 @@
 {
+    // Disable the generic format on save. This is often the source of conflicts.
+    "editor.formatOnSave": false,
+    // Instead, we will use the more specific "code actions on save" feature.
+    // This tells VS Code to run ESLint to fix issues on save.
     "editor.codeActionsOnSave": [
-        "source.fixAll.eslint"
+        {
+            "source.fixAll.eslint": true
+        }
     ],
+    // Tell the ESLint extension to validate JavaScript files.
     "eslint.validate": [
         "javascript"
-    ]
+    ],
+    // Explicitly set ESLint as the default formatter for JavaScript files.
+    // This helps when you manually trigger formatting (e.g., via command palette).
+    "[javascript]": {
+        "editor.defaultFormatter": "dbaeumer.vscode-eslint"
+    },
+    "javascript.format.enable": false
 }
