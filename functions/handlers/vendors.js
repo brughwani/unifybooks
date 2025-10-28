@@ -64,6 +64,7 @@ const vendorsHandler = async (req, res) => {
         gst: req.body.gst.toString().trim().toUpperCase(),
         pan: req.body.pan.toString().trim().toUpperCase(),
         phone: req.body.phone.toString().trim(),
+        address: req.body.address.toString().trim(),
         owner_name: (req.body.owner_name || req.body.ownerName).toString().trim(),
         shop_name: (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim(),
         created_at: new Date().toISOString(),
