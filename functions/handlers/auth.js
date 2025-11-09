@@ -13,6 +13,17 @@ async function verifyGST(gst_number) {
     state: "Maharashtra",
   };
 }
+// add PAN verifier (mock)
+async function verifyPAN(pan) {
+  // Replace with real PAN lookup if available
+  return {
+    pan,
+    legal_name: "Demo Org Pvt Ltd",
+    email: "accounts@demo.com",
+    phone: "+919876543210",
+    state: "Maharashtra",
+  };
+}
 
 // /**
 //  * Sends an OTP to the given phone number for GST login.
@@ -122,27 +133,47 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 const authHandler = async (req, res) => {
   return cors(req, res, async () => {
     try {
-      const { gst_number, otp } = req.query;
+
+
+      const { gst_number, pan, otp } = req.query;
       if (req.method !== "POST") {
         return res.status(405).json({ error: "POST only" });
       }
 
       const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
-      if (!gstRegex.test(gst_number)) {
-        return res.status(400).json({ error: "Invalid GST format" });
+      const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i;
+
+      // Determine identity source: prefer GST, fall back to PAN
+      let identityData = null;
+      let uid = null;
+
+
+      if (gst_number) {
+        if (!gstRegex.test(gst_number)) {
+          return res.status(400).json({ error: "Invalid GST format" });
+        }
+        identityData = await verifyGST(gst_number);
+        uid = gst_number;
+      } else if (pan) {
+        if (!panRegex.test(pan)) {
+          return res.status(400).json({ error: "Invalid PAN format" });
+        }
+        identityData = await verifyPAN(pan);
+        // use a namespaced uid to avoid collisions with GST uids
+        uid = `pan:${pan.toString().trim().toUpperCase()}`;
+      } else {
+        return res.status(400).json({ error: "gst_number or pan is required" });
       }
 
-      const gstData = await verifyGST(gst_number);
-      if (!gstData) {
-        return res.status(404).json({ error: "GST not found" });
+      if (!identityData) {
+        return res.status(404).json({ error: "Identity not found" });
       }
-
       if (!otp) {
-        await sendOTP(gstData.phone);
+        await sendOTP(identityData.phone);
         return res.status(200).json({ message: "OTP sent" });
       }
 
-      const otpValid = await verifyOTP(gstData.phone, otp);
+      const otpValid = await verifyOTP(identityData.phone, otp);
       if (!otpValid) {
         return res.status(401).json({ error: "Invalid OTP" });
       }
@@ -151,18 +182,18 @@ const authHandler = async (req, res) => {
         await auth.getUser(gst_number);
       } catch {
         await auth.createUser({
-          uid: gst_number,
-          email: gstData.email,
-          displayName: gstData.legal_name,
+          uid: uid,
+          email: identityData.email,
+          displayName: identityData.legal_name,
         });
-        await db.collection("orgs").doc(gst_number).set({
-          gst_number,
-          ...gstData,
+        await db.collection("orgs").doc(uid).set({
+          uid,
+          ...identityData,
           created_at: new Date().toISOString(),
         });
       }
 
-      const token = await auth.createCustomToken(gst_number);
+      const token = await auth.createCustomToken(uid);
       return res.status(200).json({ token });
     } catch (err) {
       console.error("Auth error:", err);
