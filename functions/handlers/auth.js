@@ -6,6 +6,7 @@ const cors = require("cors")({ origin: true });
 async function verifyGST(gst_number) {
   // Replace with real GSTN API integration
   return {
+    gst_number,
     legal_name: "Demo Org Pvt Ltd",
     email: "accounts@demo.com",
     phone: "+919876543210",
