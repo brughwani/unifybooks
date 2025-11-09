@@ -48,8 +48,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
   // context.auth will contain the user's information.
   if (!context.auth) {
     throw new functions.https.HttpsError(
-      "unauthenticated",
-      "The function must be called while authenticated."
+        "unauthenticated",
+        "The function must be called while authenticated."
     );
   }
 
@@ -57,8 +57,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 
   if (!idToken) {
     throw new functions.https.HttpsError(
-      "unauthenticated",
-      "Firebase ID token not provided in Authorization header."
+        "unauthenticated",
+        "Firebase ID token not provided in Authorization header."
     );
   }
 
@@ -71,8 +71,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
     // The 'phone_number' field will be present in the decoded token for phone auth users.
     if (!decodedToken.phone_number) {
       throw new functions.https.HttpsError(
-        "permission-denied",
-        "User is not authenticated with a phone number."
+          "permission-denied",
+          "User is not authenticated with a phone number."
       );
     }
 
@@ -108,9 +108,9 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError("unauthenticated", "Invalid Firebase ID token provided.");
     } else {
       throw new functions.https.HttpsError(
-        "internal",
-        "Failed to authenticate user.",
-        error.message
+          "internal",
+          "Failed to authenticate user.",
+          error.message
       );
     }
   }
