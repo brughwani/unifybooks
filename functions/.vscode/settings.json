@@ -1,6 +1,7 @@
 {
     // Disable the generic format on save. This is often the source of conflicts.
     "editor.formatOnSave": false,
+    "javascript.format.enable": false,
     // Instead, we will use the more specific "code actions on save" feature.
     // This tells VS Code to run ESLint to fix issues on save.
     "editor.codeActionsOnSave": {
@@ -15,5 +16,7 @@
     "[javascript]": {
         "editor.defaultFormatter": "dbaeumer.vscode-eslint"
     },
-    "javascript.format.enable": false
+    "prettier.disableLanguages": [
+        "javascript"
+    ]
 }
