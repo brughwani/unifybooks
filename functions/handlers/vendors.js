@@ -1,5 +1,6 @@
 const functions = require("firebase-functions");
 const { db, auth } = require("../admin");
+const cors = require("cors")({ origin: true });
 
 async function requireAuth(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -91,4 +92,6 @@ const vendorsHandler = async (req, res) => {
   }
 };
 
-module.exports = functions.https.onRequest(vendorsHandler);
+module.exports = functions.https.onRequest((req, res) =>
+  cors(req, res, async () => { await vendorsHandler(req, res); })
+);
