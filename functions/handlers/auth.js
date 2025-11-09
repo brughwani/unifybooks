@@ -1,6 +1,7 @@
 const functions = require("firebase-functions");
 const { db, auth } = require("../admin");
 const admin = require("firebase-admin");
+const cors = require("cors")({ origin: true });
 // ---------------- MOCK GST + OTP SERVICES ----------------
 async function verifyGST(gst_number) {
   // Replace with real GSTN API integration
@@ -48,8 +49,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
   // context.auth will contain the user's information.
   if (!context.auth) {
     throw new functions.https.HttpsError(
-        "unauthenticated",
-        "The function must be called while authenticated."
+      "unauthenticated",
+      "The function must be called while authenticated."
     );
   }
 
@@ -57,8 +58,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 
   if (!idToken) {
     throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Firebase ID token not provided in Authorization header."
+      "unauthenticated",
+      "Firebase ID token not provided in Authorization header."
     );
   }
 
@@ -71,8 +72,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
     // The 'phone_number' field will be present in the decoded token for phone auth users.
     if (!decodedToken.phone_number) {
       throw new functions.https.HttpsError(
-          "permission-denied",
-          "User is not authenticated with a phone number."
+        "permission-denied",
+        "User is not authenticated with a phone number."
       );
     }
 
@@ -108,9 +109,9 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError("unauthenticated", "Invalid Firebase ID token provided.");
     } else {
       throw new functions.https.HttpsError(
-          "internal",
-          "Failed to authenticate user.",
-          error.message
+        "internal",
+        "Failed to authenticate user.",
+        error.message
       );
     }
   }
@@ -118,54 +119,57 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 
 
 const authHandler = async (req, res) => {
-  try {
-    const { gst_number, otp } = req.query;
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "POST only" });
-    }
-
-    const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
-    if (!gstRegex.test(gst_number)) {
-      return res.status(400).json({ error: "Invalid GST format" });
-    }
-
-    const gstData = await verifyGST(gst_number);
-    if (!gstData) {
-      return res.status(404).json({ error: "GST not found" });
-    }
-
-    if (!otp) {
-      await sendOTP(gstData.phone);
-      return res.status(200).json({ message: "OTP sent" });
-    }
-
-    const otpValid = await verifyOTP(gstData.phone, otp);
-    if (!otpValid) {
-      return res.status(401).json({ error: "Invalid OTP" });
-    }
-
+  return cors(req, res, async () => {
     try {
-      await auth.getUser(gst_number);
-    } catch {
-      await auth.createUser({
-        uid: gst_number,
-        email: gstData.email,
-        displayName: gstData.legal_name,
-      });
-      await db.collection("orgs").doc(gst_number).set({
-        gst_number,
-        ...gstData,
-        created_at: new Date().toISOString(),
-      });
-    }
+      const { gst_number, otp } = req.query;
+      if (req.method !== "POST") {
+        return res.status(405).json({ error: "POST only" });
+      }
 
-    const token = await auth.createCustomToken(gst_number);
-    return res.status(200).json({ token });
-  } catch (err) {
-    console.error("Auth error:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
+      const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+      if (!gstRegex.test(gst_number)) {
+        return res.status(400).json({ error: "Invalid GST format" });
+      }
+
+      const gstData = await verifyGST(gst_number);
+      if (!gstData) {
+        return res.status(404).json({ error: "GST not found" });
+      }
+
+      if (!otp) {
+        await sendOTP(gstData.phone);
+        return res.status(200).json({ message: "OTP sent" });
+      }
+
+      const otpValid = await verifyOTP(gstData.phone, otp);
+      if (!otpValid) {
+        return res.status(401).json({ error: "Invalid OTP" });
+      }
+
+      try {
+        await auth.getUser(gst_number);
+      } catch {
+        await auth.createUser({
+          uid: gst_number,
+          email: gstData.email,
+          displayName: gstData.legal_name,
+        });
+        await db.collection("orgs").doc(gst_number).set({
+          gst_number,
+          ...gstData,
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      const token = await auth.createCustomToken(gst_number);
+      return res.status(200).json({ token });
+    } catch (err) {
+      console.error("Auth error:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
 };
+
 function validateRegisterPayload(body) {
   const errors = [];
   if (!body.phone) errors.push("phone is required");
@@ -176,48 +180,50 @@ function validateRegisterPayload(body) {
 }
 
 exports.register = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  cors(req, res, async () => {
+    if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
-  const errors = validateRegisterPayload(req.body);
-  if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
+    const errors = validateRegisterPayload(req.body);
+    if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
 
-  const phone = req.body.phone.toString().trim(); // e.g. +911234567890
-  const pan = req.body.pan.toString().trim().toUpperCase();
-  const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
-  const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
-  const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
+    const phone = req.body.phone.toString().trim(); // e.g. +911234567890
+    const pan = req.body.pan.toString().trim().toUpperCase();
+    const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
+    const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
+    const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
 
-  // choose uid strategy (use phone-based uid to avoid collisions)
-  const uid = `phone:${phone}`;
+    // choose uid strategy (use phone-based uid to avoid collisions)
+    const uid = `phone:${phone}`;
 
-  try {
-    // ensure auth user exists
     try {
-      await auth.getUser(uid);
-    } catch (e) {
-      await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
-    }
+      // ensure auth user exists
+      try {
+        await auth.getUser(uid);
+      } catch (e) {
+        await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
+      }
 
-    // create org document (id = uid) if not exists
-    const orgRef = db.collection("orgs").doc(uid);
-    const orgSnap = await orgRef.get();
-    if (!orgSnap.exists) {
-      await orgRef.set({
-        pan,
-        ...(gst ? { gst } : {}),
-        phone,
-        owner_name: ownerName,
-        shop_name: shopName,
-        created_at: new Date().toISOString(),
-      });
-    }
+      // create org document (id = uid) if not exists
+      const orgRef = db.collection("orgs").doc(uid);
+      const orgSnap = await orgRef.get();
+      if (!orgSnap.exists) {
+        await orgRef.set({
+          pan,
+          ...(gst ? { gst } : {}),
+          phone,
+          owner_name: ownerName,
+          shop_name: shopName,
+          created_at: new Date().toISOString(),
+        });
+      }
 
-    // issue custom token so client can sign in
-    const customToken = await auth.createCustomToken(uid);
-    return res.status(200).json({ customToken });
-  } catch (err) {
-    console.error("Register error:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
+      // issue custom token so client can sign in
+      const customToken = await auth.createCustomToken(uid);
+      return res.status(200).json({ customToken });
+    } catch (err) {
+      console.error("Register error:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
 });
 module.exports = functions.https.onRequest(authHandler);
