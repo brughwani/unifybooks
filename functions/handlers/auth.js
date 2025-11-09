@@ -48,8 +48,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
   // context.auth will contain the user's information.
   if (!context.auth) {
     throw new functions.https.HttpsError(
-        "unauthenticated",
-        "The function must be called while authenticated."
+      "unauthenticated",
+      "The function must be called while authenticated."
     );
   }
 
@@ -57,8 +57,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 
   if (!idToken) {
     throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Firebase ID token not provided in Authorization header."
+      "unauthenticated",
+      "Firebase ID token not provided in Authorization header."
     );
   }
 
@@ -71,8 +71,8 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
     // The 'phone_number' field will be present in the decoded token for phone auth users.
     if (!decodedToken.phone_number) {
       throw new functions.https.HttpsError(
-          "permission-denied",
-          "User is not authenticated with a phone number."
+        "permission-denied",
+        "User is not authenticated with a phone number."
       );
     }
 
@@ -108,9 +108,9 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError("unauthenticated", "Invalid Firebase ID token provided.");
     } else {
       throw new functions.https.HttpsError(
-          "internal",
-          "Failed to authenticate user.",
-          error.message
+        "internal",
+        "Failed to authenticate user.",
+        error.message
       );
     }
   }
@@ -166,5 +166,58 @@ const authHandler = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+function validateRegisterPayload(body) {
+  const errors = [];
+  if (!body.phone) errors.push("phone is required");
+  if (!body.pan) errors.push("pan is required");
+  if (!body.owner_name && !body.ownerName) errors.push("owner_name is required");
+  if (!body.shop_name && !body.shopName && !body.firm_name) errors.push("shop_name is required");
+  return errors;
+}
 
+exports.register = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+
+  const errors = validateRegisterPayload(req.body);
+  if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
+
+  const phone = req.body.phone.toString().trim(); // e.g. +911234567890
+  const pan = req.body.pan.toString().trim().toUpperCase();
+  const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
+  const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
+  const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
+
+  // choose uid strategy (use phone-based uid to avoid collisions)
+  const uid = `phone:${phone}`;
+
+  try {
+    // ensure auth user exists
+    try {
+      await auth.getUser(uid);
+    } catch (e) {
+      await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
+    }
+
+    // create org document (id = uid) if not exists
+    const orgRef = db.collection("orgs").doc(uid);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) {
+      await orgRef.set({
+        pan,
+        ...(gst ? { gst } : {}),
+        phone,
+        owner_name: ownerName,
+        shop_name: shopName,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // issue custom token so client can sign in
+    const customToken = await auth.createCustomToken(uid);
+    return res.status(200).json({ customToken });
+  } catch (err) {
+    console.error("Register error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 module.exports = functions.https.onRequest(authHandler);

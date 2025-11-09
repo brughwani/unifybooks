@@ -34,8 +34,8 @@ function validateVendorPayload(payload) {
   const ownerName = (payload.owner_name || payload.ownerName || "").toString().trim();
   const shopName = (payload.shop_name || payload.shopName || payload.firm_name || payload.shop || "").toString().trim();
 
-  if (!gst) errors.push("gst is required");
-  else if (!gstRegex.test(gst)) errors.push("gst has invalid format");
+  // GST is now optional: validate format only if provided
+  if (gst && !gstRegex.test(gst)) errors.push("gst has invalid format");
 
   if (!pan) errors.push("pan is required");
   else if (!panRegex.test(pan)) errors.push("pan has invalid format");
@@ -61,7 +61,7 @@ const vendorsHandler = async (req, res) => {
       const errors = validateVendorPayload(req.body);
       if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
       const vendor = {
-        gst: req.body.gst.toString().trim().toUpperCase(),
+        gst: req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null,
         pan: req.body.pan.toString().trim().toUpperCase(),
         phone: req.body.phone.toString().trim(),
         address: req.body.address.toString().trim(),
