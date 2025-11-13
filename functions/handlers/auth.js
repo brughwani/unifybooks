@@ -142,13 +142,28 @@ const authHandler = async (req, res) => {
 
       const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
       const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i;
+      // normalize inputs: treat missing/empty as not provided
+      const gstRaw = (req.query.gst_number ?? "").toString().trim();
+      const panRaw = (req.query.pan ?? "").toString().trim();
+      //const otp = (req.query.otp ?? '').toString().trim();
 
+      if (!gstRaw && !panRaw) {
+        return res.status(400).json({ error: "gst_number or pan is required" });
+      }
+
+      // validate only when provided
+      if (gstRaw && !gstRegex.test(gstRaw)) {
+        return res.status(400).json({ error: "Invalid GST format" });
+      }
+      if (panRaw && !panRegex.test(panRaw)) {
+        return res.status(400).json({ error: "Invalid PAN format" });
+      }
       // Determine identity source: prefer GST, fall back to PAN
       let identityData = null;
       let uid = null;
 
 
-      if (gst_number) {
+      if (gst_number !== undefined && gst_number !== null) {
         if (!gstRegex.test(gst_number)) {
           return res.status(400).json({ error: "Invalid GST format" });
         }
