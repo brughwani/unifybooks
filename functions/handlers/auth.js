@@ -147,8 +147,8 @@ const authHandler = async (req, res) => {
       const panRaw = (req.query.pan ?? "").toString().trim();
       //const otp = (req.query.otp ?? '').toString().trim();
 
-      if (!gstRaw && !panRaw) {
-        return res.status(400).json({ error: "gst_number or pan is required" });
+      if (!panRaw) {
+        return res.status(400).json({ error: "pan is required" });
       }
 
       // validate only when provided
