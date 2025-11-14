@@ -176,6 +176,7 @@ const authHandler = async (req, res) => {
         identityData = await verifyPAN(pan);
         // use a namespaced uid to avoid collisions with GST uids
         uid = `pan:${pan.toString().trim().toUpperCase()}`;
+        console.log("Using PAN-based UID:", uid);
       } else {
         return res.status(400).json({ error: "gst_number or pan is required" });
       }
