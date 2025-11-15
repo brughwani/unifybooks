@@ -146,6 +146,7 @@ const authHandler = async (req, res) => {
       const gstRaw = (req.query.gst_number ?? "").toString().trim();
       const panRaw = (req.query.pan ?? "").toString().trim();
       //const otp = (req.query.otp ?? '').toString().trim();
+      console.log("Auth request for GST:", gstRaw, "PAN:", panRaw);
 
       if (!panRaw) {
         return res.status(400).json({ error: "pan is required" });
