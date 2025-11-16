@@ -275,4 +275,15 @@ exports.register = functions.https.onRequest(async (req, res) => {
     }
   });
 });
-module.exports = functions.https.onRequest(authHandler);
+
+// module.exports = functions.https.onRequest(authHandler);
+
+exports.authHandler = functions.https.onRequest(authHandler);
+exports.register = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+    const errors = validateRegisterPayload(req.body);
+    if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
+    // ...existing register logic...
+  });
+});
