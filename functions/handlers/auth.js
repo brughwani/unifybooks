@@ -278,7 +278,7 @@ exports.register = functions.https.onRequest(async (req, res) => {
 
 // module.exports = functions.https.onRequest(authHandler);
 
-exports.authHandler = functions.https.onRequest(authHandler);
+exports.auth = functions.https.onRequest(authHandler);
 exports.register = functions.https.onRequest(async (req, res) => {
   cors(req, res, async () => {
     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
