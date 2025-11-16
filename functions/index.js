@@ -298,7 +298,7 @@
 // }
 // exports.handler = functions.https.onRequest(handler);
 
-const auth = require("./handlers/auth");
+const authModule = require("./handlers/auth");
 const inventory = require("./handlers/inventory");
 const vendors = require("./handlers/vendors");
 const transactions = require("./handlers/transactions");
@@ -306,8 +306,23 @@ const invoiceRequests = require("./handlers/invoiceRequests");
 
 // Export each handler as a separate Cloud Function
 // The name you give it here (e.g., "auth", "inventory") becomes part of the URL
-exports.auth = auth;
-exports.inventory = inventory;
-exports.vendors = vendors;
-exports.transactions = transactions;
-exports.invoiceRequests = invoiceRequests;
+// exports.auth = auth;
+// exports.inventory = inventory;
+// exports.vendors = vendors;
+// exports.transactions = transactions;
+// exports.invoiceRequests = invoiceRequests;
+const pick = (mod, name) => {
+    if (!mod) return undefined;
+    if (typeof mod === "function") return mod;
+    if (mod[name]) return mod[name];
+    if (mod.default) return mod.default;
+    return undefined;
+};
+
+exports.auth = pick(authModule, "auth") || pick(authModule, "handler") || authModule;
+exports.register = pick(authModule, "register");
+exports.inventory = pick(inventory, "inventory") || inventory;
+exports.vendors = pick(vendors, "vendors") || vendors;
+exports.transactions = pick(transactions, "transactions") || transactions;
+exports.invoiceRequests = pick(invoiceRequests, "invoiceRequests") || invoiceRequests;
+// ...existing code...
