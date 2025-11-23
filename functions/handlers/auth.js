@@ -3,27 +3,27 @@ const { db, auth } = require("../admin");
 const admin = require("firebase-admin");
 const cors = require("cors")({ origin: true });
 // ---------------- MOCK GST + OTP SERVICES ----------------
-async function verifyGST(gst_number) {
-  // Replace with real GSTN API integration
-  return {
-    gst_number,
-    legal_name: "Demo Org Pvt Ltd",
-    email: "accounts@demo.com",
-    phone: "+919876543210",
-    state: "Maharashtra",
-  };
-}
+// async function verifyGST(gst_number) {
+//   // Replace with real GSTN API integration
+//   return {
+//     gst_number,
+//     legal_name: "Demo Org Pvt Ltd",
+//     email: "accounts@demo.com",
+//     phone: "+919876543210",
+//     state: "Maharashtra",
+//   };
+// }
 // add PAN verifier (mock)
-async function verifyPAN(pan) {
-  // Replace with real PAN lookup if available
-  return {
-    pan,
-    legal_name: "Demo Org Pvt Ltd",
-    email: "accounts@demo.com",
-    phone: "+919876543210",
-    state: "Maharashtra",
-  };
-}
+// async function verifyPAN(pan) {
+//   // Replace with real PAN lookup if available
+//   return {
+//     pan,
+//     legal_name: "Demo Org Pvt Ltd",
+//     email: "accounts@demo.com",
+//     phone: "+919876543210",
+//     state: "Maharashtra",
+//   };
+// }
 
 // /**
 //  * Sends an OTP to the given phone number for GST login.
@@ -168,13 +168,13 @@ const authHandler = async (req, res) => {
         if (!gstRegex.test(gst_number)) {
           return res.status(400).json({ error: "Invalid GST format" });
         }
-        identityData = await verifyGST(gst_number);
+        //identityData = await verifyGST(gst_number);
         uid = gst_number;
       } else if (pan) {
         if (!panRegex.test(pan)) {
           return res.status(400).json({ error: "Invalid PAN format" });
         }
-        identityData = await verifyPAN(pan);
+        //  identityData = await verifyPAN(pan);
         // use a namespaced uid to avoid collisions with GST uids
         uid = `pan:${pan.toString().trim().toUpperCase()}`;
         console.log("Using PAN-based UID:", uid);
@@ -279,11 +279,12 @@ exports.register = functions.https.onRequest(async (req, res) => {
 // module.exports = functions.https.onRequest(authHandler);
 
 exports.auth = functions.https.onRequest(authHandler);
-exports.register = functions.https.onRequest(async (req, res) => {
-  cors(req, res, async () => {
-    if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
-    const errors = validateRegisterPayload(req.body);
-    if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
-    // ...existing register logic...
-  });
-});
+// exports.register = functions.https.onRequest(async (req, res) => {
+//   cors(req, res, async () => {
+//     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+//     const errors = validateRegisterPayload(req.body);
+//     if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
+//     // ...existing register logic...
+//   });
+// });
+
