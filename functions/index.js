@@ -297,8 +297,8 @@
 //   }
 // }
 // exports.handler = functions.https.onRequest(handler);
-const functions = require("firebase-functions/v2");
-
+//const functions = require("firebase-functions/v2");
+const { onRequest } = require("firebase-functions/v2/https");
 const authModule = require("./handlers/auth");
 const inventory = require("./handlers/inventory");
 const vendors = require("./handlers/vendors");
@@ -337,8 +337,7 @@ function exportAsHttp(name, mod, exportName) {
     const fn = pick(mod, exportName || name);
     if (!fn) return;
     if (typeof fn === "function") {
-        exports[name] = functions.runWith({ timeoutSeconds: 300 })
-            .https.onRequest(fn);
+        exports[name] = onRequest({ timeoutSeconds: 300 }, fn);
     } else {
         exports[name] = fn;
     }
