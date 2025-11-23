@@ -297,7 +297,7 @@
 //   }
 // }
 // exports.handler = functions.https.onRequest(handler);
-const functions = require("firebase-functions");
+const functions = require("firebase-functions/v2");
 
 const authModule = require("./handlers/auth");
 const inventory = require("./handlers/inventory");
