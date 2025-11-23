@@ -297,6 +297,7 @@
 //   }
 // }
 // exports.handler = functions.https.onRequest(handler);
+const functions = require("firebase-functions");
 
 const authModule = require("./handlers/auth");
 const inventory = require("./handlers/inventory");
@@ -311,18 +312,42 @@ const invoiceRequests = require("./handlers/invoiceRequests");
 // exports.vendors = vendors;
 // exports.transactions = transactions;
 // exports.invoiceRequests = invoiceRequests;
-const pick = (mod, name) => {
-    if (!mod) return undefined;
-    if (typeof mod === "function") return mod;
-    if (mod[name]) return mod[name];
-    if (mod.default) return mod.default;
-    return undefined;
-};
+// const pick = (mod, name) => {
+//     if (!mod) return undefined;
+//     if (typeof mod === "function") return mod;
+//     if (mod[name]) return mod[name];
+//     if (mod.default) return mod.default;
+//     return undefined;
+// };
 
-exports.auth = pick(authModule, "auth") || pick(authModule, "handler") || authModule;
-exports.register = pick(authModule, "register");
-exports.inventory = pick(inventory, "inventory") || inventory;
-exports.vendors = pick(vendors, "vendors") || vendors;
-exports.transactions = pick(transactions, "transactions") || transactions;
-exports.invoiceRequests = pick(invoiceRequests, "invoiceRequests") || invoiceRequests;
-// ...existing code...
+// exports.auth = pick(authModule, "auth") || pick(authModule, "handler") || authModule;
+// exports.register = pick(authModule, "register");
+// exports.inventory = pick(inventory, "inventory") || inventory;
+// exports.vendors = pick(vendors, "vendors") || vendors;
+// exports.transactions = pick(transactions, "transactions") || transactions;
+// exports.invoiceRequests = pick(invoiceRequests, "invoiceRequests") || invoiceRequests;
+// // ...existing code...
+const pick = (mod, name) =>
+    mod == null ? undefined
+        : typeof mod === "function" ? mod
+            : mod[name] ?? mod.default ?? undefined;
+
+// wrap with 5-min timeout
+function exportAsHttp(name, mod, exportName) {
+    const fn = pick(mod, exportName || name);
+    if (!fn) return;
+    if (typeof fn === "function") {
+        exports[name] = functions
+            .runWith({ timeoutSeconds: 300 })
+            .https.onRequest(fn);
+    } else {
+        exports[name] = fn;
+    }
+}
+
+exportAsHttp("auth", authModule, "auth");
+exportAsHttp("register", authModule, "register");
+exportAsHttp("inventory", inventory);
+exportAsHttp("vendors", vendors);
+exportAsHttp("transactions", transactions);
+exportAsHttp("invoiceRequests", invoiceRequests);
