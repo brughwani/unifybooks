@@ -337,8 +337,7 @@ function exportAsHttp(name, mod, exportName) {
     const fn = pick(mod, exportName || name);
     if (!fn) return;
     if (typeof fn === "function") {
-        exports[name] = functions
-            .runWith({ timeoutSeconds: 300 })
+        exports[name] = functions.runWith({ timeoutSeconds: 300 })
             .https.onRequest(fn);
     } else {
         exports[name] = fn;
