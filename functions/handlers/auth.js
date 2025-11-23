@@ -246,25 +246,38 @@ exports.register = functions.https.onRequest(async (req, res) => {
 
     try {
       // ensure auth user exists
-      try {
-        await auth.getUser(uid);
-      } catch (e) {
-        await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
-      }
 
+      await Promise.all([
+        // 1. Create or get auth user
+        auth.getUser(uid).catch(() =>
+          auth.createUser({ uid, phoneNumber: phone, displayName: shopName })
+        ),
+        // 2. Create or update org document (use set with merge to avoid NOT_FOUND)
+        db.collection("orgs").doc(uid).set(
+          {
+            pan,
+            ...(gst ? { gst } : {}),
+            phone,
+            owner_name: ownerName,
+            shop_name: shopName,
+            created_at: new Date().toISOString(),
+          },
+          { merge: true }
+        ),
+      ]);
       // create org document (id = uid) if not exists
-      const orgRef = db.collection("orgs").doc(uid);
-      const orgSnap = await orgRef.get();
-      if (!orgSnap.exists) {
-        await orgRef.set({
-          pan,
-          ...(gst ? { gst } : {}),
-          phone,
-          owner_name: ownerName,
-          shop_name: shopName,
-          created_at: new Date().toISOString(),
-        });
-      }
+      // const orgRef = db.collection("orgs").doc(uid);
+      // const orgSnap = await orgRef.get();
+      // if (!orgSnap.exists) {
+      //   await orgRef.set({
+      //     pan,
+      //     ...(gst ? { gst } : {}),
+      //     phone,
+      //     owner_name: ownerName,
+      //     shop_name: shopName,
+      //     created_at: new Date().toISOString(),
+      //   });
+      // }
 
       // issue custom token so client can sign in
       const customToken = await auth.createCustomToken(uid);
