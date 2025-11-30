@@ -228,6 +228,66 @@ function validateRegisterPayload(body) {
   return errors;
 }
 
+// exports.register = functions.https.onRequest(async (req, res) => {
+//   cors(req, res, async () => {
+//     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+
+//     const errors = validateRegisterPayload(req.body);
+//     if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
+
+//     const phone = req.body.phone.toString().trim(); // e.g. +911234567890
+//     const pan = req.body.pan.toString().trim().toUpperCase();
+//     const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
+//     const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
+//     const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
+
+//     // choose uid strategy (use phone-based uid to avoid collisions)
+//     const uid = `phone:${phone}`;
+
+//     try {
+//       // ensure auth user exists
+
+//       await Promise.all([
+//         // 1. Create or get auth user
+//         auth.getUser(uid).catch(() =>
+//           auth.createUser({ uid, phoneNumber: phone, displayName: shopName })
+//         ),
+//         // 2. Create or update org document (use set with merge to avoid NOT_FOUND)
+//         db.collection("orgs").doc(uid).set(
+//           {
+//             pan,
+//             ...(gst ? { gst } : {}),
+//             phone,
+//             owner_name: ownerName,
+//             shop_name: shopName,
+//             created_at: new Date().toISOString(),
+//           },
+//           { merge: true }
+//         ),
+//       ]);
+//       // create org document (id = uid) if not exists
+//       // const orgRef = db.collection("orgs").doc(uid);
+//       // const orgSnap = await orgRef.get();
+//       // if (!orgSnap.exists) {
+//       //   await orgRef.set({
+//       //     pan,
+//       //     ...(gst ? { gst } : {}),
+//       //     phone,
+//       //     owner_name: ownerName,
+//       //     shop_name: shopName,
+//       //     created_at: new Date().toISOString(),
+//       //   });
+//       // }
+
+//       // issue custom token so client can sign in
+//       const customToken = await auth.createCustomToken(uid);
+//       return res.status(200).json({ customToken });
+//     } catch (err) {
+//       console.error("Register error:", err);
+//       return res.status(500).json({ error: "Internal server error" });
+//     }
+//   });
+// });
 exports.register = functions.https.onRequest(async (req, res) => {
   cors(req, res, async () => {
     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
@@ -235,60 +295,68 @@ exports.register = functions.https.onRequest(async (req, res) => {
     const errors = validateRegisterPayload(req.body);
     if (errors.length) return res.status(400).json({ error: "Invalid payload", details: errors });
 
-    const phone = req.body.phone.toString().trim(); // e.g. +911234567890
+    const phone = req.body.phone.toString().trim();
     const pan = req.body.pan.toString().trim().toUpperCase();
     const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
     const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
     const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
 
-    // choose uid strategy (use phone-based uid to avoid collisions)
-    const uid = `phone:${phone}`;
+    // Sanitize UID to ensure no invalid characters cause path issues
+    // Note: Firestore IDs cannot contain forward slashes '/'
+    const uid = `phone:${phone.replace(/\//g, "_")}`;
+
+    console.log(`[Register] Attempting to register UID: ${uid}`);
 
     try {
-      // ensure auth user exists
+      // Step 1: Handle Auth User
+      try {
+        await auth.getUser(uid);
+        console.log(`[Register] User ${uid} already exists.`);
+      } catch (authErr) {
+        if (authErr.code === "auth/user-not-found") {
+          console.log(`[Register] Creating new user for ${uid}`);
+          await auth.createUser({
+            uid,
+            phoneNumber: phone,
+            displayName: shopName
+          });
+        } else {
+          throw authErr; // Throw real auth errors
+        }
+      }
 
-      await Promise.all([
-        // 1. Create or get auth user
-        auth.getUser(uid).catch(() =>
-          auth.createUser({ uid, phoneNumber: phone, displayName: shopName })
-        ),
-        // 2. Create or update org document (use set with merge to avoid NOT_FOUND)
-        db.collection("orgs").doc(uid).set(
-          {
-            pan,
-            ...(gst ? { gst } : {}),
-            phone,
-            owner_name: ownerName,
-            shop_name: shopName,
-            created_at: new Date().toISOString(),
-          },
-          { merge: true }
-        ),
-      ]);
-      // create org document (id = uid) if not exists
-      // const orgRef = db.collection("orgs").doc(uid);
-      // const orgSnap = await orgRef.get();
-      // if (!orgSnap.exists) {
-      //   await orgRef.set({
-      //     pan,
-      //     ...(gst ? { gst } : {}),
-      //     phone,
-      //     owner_name: ownerName,
-      //     shop_name: shopName,
-      //     created_at: new Date().toISOString(),
-      //   });
-      // }
+      // Step 2: Write to Firestore
+      // We do this AFTER auth to ensure we don't write orphaned records if auth fails
+      const orgData = {
+        pan,
+        phone,
+        owner_name: ownerName,
+        shop_name: shopName,
+        created_at: new Date().toISOString(),
+      };
+      if (gst) orgData.gst = gst;
 
-      // issue custom token so client can sign in
+      console.log(`[Register] Writing to Firestore path: orgs/${uid}`);
+
+      // Using set with merge is correct here
+      await db.collection("orgs").doc(uid).set(orgData, { merge: true });
+
+      // Step 3: Create Token
       const customToken = await auth.createCustomToken(uid);
+
       return res.status(200).json({ customToken });
+
     } catch (err) {
-      console.error("Register error:", err);
-      return res.status(500).json({ error: "Internal server error" });
+      console.error("Register CRITICAL error:", err);
+      // Return the actual error message in dev mode to help you debug
+      return res.status(500).json({
+        error: "Internal server error",
+        message: err.message,
+        code: err.code
+      });
     }
   });
 });
-
 // module.exports = functions.https.onRequest(authHandler);
 
 exports.auth = functions.https.onRequest(authHandler);
