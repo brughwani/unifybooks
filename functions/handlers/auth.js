@@ -240,7 +240,7 @@ exports.register = functions.https.onRequest(async (req, res) => {
     const gst = req.body.gst ? req.body.gst.toString().trim().toUpperCase() : null;
     const ownerName = (req.body.owner_name || req.body.ownerName).toString().trim();
     const shopName = (req.body.shop_name || req.body.shopName || req.body.firm_name || req.body.shop).toString().trim();
-
+    const address = req.body.address ? req.body.address.toString().trim() : "";
     // choose uid strategy (use phone-based uid to avoid collisions)
     const uid = `phone:${phone}`;
 
@@ -260,6 +260,7 @@ exports.register = functions.https.onRequest(async (req, res) => {
             phone,
             owner_name: ownerName,
             shop_name: shopName,
+            address: address,
             created_at: new Date().toISOString(),
           },
           { merge: true }
