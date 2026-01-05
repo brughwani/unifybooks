@@ -133,85 +133,79 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 const authHandler = async (req, res) => {
   return cors(req, res, async () => {
     try {
-
-
-      const { gst_number, pan, otp } = req.query;
       if (req.method !== "POST") {
         return res.status(405).json({ error: "POST only" });
       }
 
-      const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
-      const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i;
-      // normalize inputs: treat missing/empty as not provided
-      const gstRaw = (req.query.gst_number ?? "").toString().trim();
-      const panRaw = (req.query.pan ?? "").toString().trim();
-      //const otp = (req.query.otp ?? '').toString().trim();
-      console.log("Auth request for GST:", gstRaw, "PAN:", panRaw);
+      // Get the Firebase ID token from Authorization header or request body
+      let idToken = null;
 
-      if (!panRaw) {
-        return res.status(400).json({ error: "pan is required" });
+      // Check Authorization header first (Bearer token)
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        idToken = authHeader.split("Bearer ")[1];
       }
 
-      // validate only when provided
-      if (gstRaw && !gstRegex.test(gstRaw)) {
-        return res.status(400).json({ error: "Invalid GST format" });
-      }
-      if (panRaw && !panRegex.test(panRaw)) {
-        return res.status(400).json({ error: "Invalid PAN format" });
-      }
-      // Determine identity source: prefer GST, fall back to PAN
-      let identityData = null;
-      let uid = null;
-
-
-      if (gst_number !== undefined && gst_number !== null) {
-        if (!gstRegex.test(gst_number)) {
-          return res.status(400).json({ error: "Invalid GST format" });
-        }
-        //identityData = await verifyGST(gst_number);
-        uid = gst_number;
-      } else if (pan) {
-        if (!panRegex.test(pan)) {
-          return res.status(400).json({ error: "Invalid PAN format" });
-        }
-        //  identityData = await verifyPAN(pan);
-        // use a namespaced uid to avoid collisions with GST uids
-        uid = `pan:${pan.toString().trim().toUpperCase()}`;
-        console.log("Using PAN-based UID:", uid);
-      } else {
-        return res.status(400).json({ error: "gst_number or pan is required" });
+      // Fallback to request body
+      if (!idToken && req.body && req.body.idToken) {
+        idToken = req.body.idToken;
       }
 
-      if (!identityData) {
-        return res.status(404).json({ error: "Identity not found" });
-      }
-      if (!otp) {
-        await sendOTP(identityData.phone);
-        return res.status(200).json({ message: "OTP sent" });
-      }
-
-      const otpValid = await verifyOTP(identityData.phone, otp);
-      if (!otpValid) {
-        return res.status(401).json({ error: "Invalid OTP" });
+      if (!idToken) {
+        return res.status(401).json({
+          error: "No authentication token provided",
+          message: "Please provide Firebase ID token in Authorization header (Bearer <token>) or in request body as 'idToken'"
+        });
       }
 
+      // Verify the Firebase ID token
+      let decodedToken;
       try {
-        await auth.getUser(gst_number);
-      } catch {
-        await auth.createUser({
-          uid: uid,
-          email: identityData.email,
-          displayName: identityData.legal_name,
-        });
-        await db.collection("orgs").doc(uid).set({
-          uid,
-          ...identityData,
-          created_at: new Date().toISOString(),
-        });
+        decodedToken = await admin.auth().verifyIdToken(idToken);
+      } catch (verifyError) {
+        console.error("Token verification failed:", verifyError);
+
+        if (verifyError.code === "auth/id-token-expired") {
+          return res.status(401).json({ error: "Token expired. Please re-authenticate." });
+        } else if (verifyError.code === "auth/argument-error" || verifyError.code === "auth/invalid-id-token") {
+          return res.status(401).json({ error: "Invalid token provided." });
+        }
+        return res.status(401).json({ error: "Token verification failed." });
       }
 
-      const token = await auth.createCustomToken(uid);
-      return res.status(200).json({ token });
+      // Extract user info from the decoded token
+      const uid = decodedToken.uid;
+      const phoneNumber = decodedToken.phone_number || null;
+      const email = decodedToken.email || null;
+
+      console.log("Authenticated user:", uid, "Phone:", phoneNumber);
+
+      // Check if user/org exists, if not create a basic record
+      const orgRef = db.collection("orgs").doc(uid);
+      const orgSnap = await orgRef.get();
+
+      if (!orgSnap.exists) {
+        // Create a new org record for first-time users
+        await orgRef.set({
+          uid,
+          phone: phoneNumber,
+          email: email,
+          created_at: new Date().toISOString(),
+          is_registered: false, // Flag to indicate profile completion needed
+        });
+        console.log("Created new org record for user:", uid);
+      }
+
+      // Return success with user info
+      return res.status(200).json({
+        success: true,
+        uid: uid,
+        phoneNumber: phoneNumber,
+        email: email,
+        isNewUser: !orgSnap.exists,
+        message: "Authentication successful"
+      });
+
     } catch (err) {
       console.error("Auth error:", err);
       return res.status(500).json({ error: "Internal server error" });
