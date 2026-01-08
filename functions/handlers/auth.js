@@ -133,6 +133,7 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 const authHandler = async (req, res) => {
   return cors(req, res, async () => {
     try {
+      console.log("Received request:", req.method);
       if (req.method !== "POST") {
         return res.status(405).json({ error: "POST only" });
       }
