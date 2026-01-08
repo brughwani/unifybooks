@@ -30,14 +30,14 @@ const cors = require("cors")({ origin: true });
 //  * Note: This is a mock implementation and should be replaced with a real Twilio/MSG91 integration in production.
 //  * @param {string} phone - The phone number to send the OTP to.
 //  */
-async function sendOTP(phone) {
-  // Integrate Twilio/MSG91 in production
-  console.log(`Sending OTP to ${phone}`);
-}
-async function verifyOTP(phone, otp) {
-  // Dev-mode OTP
-  return otp === "1234";
-}
+// async function sendOTP(phone) {
+//   // Integrate Twilio/MSG91 in production
+//   console.log(`Sending OTP to ${phone}`);
+// }
+// async function verifyOTP(phone, otp) {
+//   // Dev-mode OTP
+//   return otp === "1234";
+// }
 
 
 // Initialize Firebase Admin SDK if it hasn't been initialized yet
