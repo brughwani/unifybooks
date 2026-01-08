@@ -56,7 +56,7 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
+exports.getPhoneByPan = functions.https.onCall(async (data, context) => {
   // Ensure the request is made by an authenticated user, which means
   // context.auth will contain the user's information.
   if (!context.auth) {
@@ -133,79 +133,106 @@ exports.verifyPhoneAuthToken = functions.https.onCall(async (data, context) => {
 const authHandler = async (req, res) => {
   return cors(req, res, async () => {
     try {
-      console.log("Received request:", req.method);
-      if (req.method !== "POST") {
-        return res.status(405).json({ error: "POST only" });
-      }
+      // console.log("Received request:", req.method);
+      // if (req.method !== "POST") {
+      //   return res.status(405).json({ error: "POST only" });
+      // }
 
-      // Get the Firebase ID token from Authorization header or request body
-      let idToken = null;
+      // // Get the Firebase ID token from Authorization header or request body
+      // let idToken = null;
 
-      // Check Authorization header first (Bearer token)
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        idToken = authHeader.split("Bearer ")[1];
-      }
+      // // Check Authorization header first (Bearer token)
+      // const authHeader = req.headers.authorization;
+      // if (authHeader && authHeader.startsWith("Bearer ")) {
+      //   idToken = authHeader.split("Bearer ")[1];
+      // }
 
       // Fallback to request body
-      if (!idToken && req.body && req.body.idToken) {
-        idToken = req.body.idToken;
-      }
+      // if (!idToken && req.body && req.body.idToken) {
+      //   idToken = req.body.idToken;
+      // }
 
-      if (!idToken) {
-        return res.status(401).json({
-          error: "No authentication token provided",
-          message: "Please provide Firebase ID token in Authorization header (Bearer <token>) or in request body as 'idToken'"
-        });
-      }
+      // if (!idToken) {
+      //   return res.status(401).json({
+      //     error: "No authentication token provided",
+      //     message: "Please provide Firebase ID token in Authorization header (Bearer <token>) or in request body as 'idToken'"
+      //   });
+      // }
 
-      // Verify the Firebase ID token
-      let decodedToken;
-      try {
-        decodedToken = await admin.auth().verifyIdToken(idToken);
-      } catch (verifyError) {
-        console.error("Token verification failed:", verifyError);
+      // // Verify the Firebase ID token
+      // let decodedToken;
+      // try {
+      //   decodedToken = await admin.auth().verifyIdToken(idToken);
+      // } catch (verifyError) {
+      //   console.error("Token verification failed:", verifyError);
 
-        if (verifyError.code === "auth/id-token-expired") {
-          return res.status(401).json({ error: "Token expired. Please re-authenticate." });
-        } else if (verifyError.code === "auth/argument-error" || verifyError.code === "auth/invalid-id-token") {
-          return res.status(401).json({ error: "Invalid token provided." });
-        }
-        return res.status(401).json({ error: "Token verification failed." });
-      }
+      //   if (verifyError.code === "auth/id-token-expired") {
+      //     return res.status(401).json({ error: "Token expired. Please re-authenticate." });
+      //   } else if (verifyError.code === "auth/argument-error" || verifyError.code === "auth/invalid-id-token") {
+      //     return res.status(401).json({ error: "Invalid token provided." });
+      //   }
+      //   return res.status(401).json({ error: "Token verification failed." });
+      // }
 
       // Extract user info from the decoded token
-      const uid = decodedToken.uid;
-      const phoneNumber = decodedToken.phone_number || null;
-      const email = decodedToken.email || null;
 
-      console.log("Authenticated user:", uid, "Phone:", phoneNumber);
-
-      // Check if user/org exists, if not create a basic record
-      const orgRef = db.collection("orgs").doc(uid);
-      const orgSnap = await orgRef.get();
-
-      if (!orgSnap.exists) {
-        // Create a new org record for first-time users
-        await orgRef.set({
-          uid,
-          phone: phoneNumber,
-          email: email,
-          created_at: new Date().toISOString(),
-          is_registered: false, // Flag to indicate profile completion needed
-        });
-        console.log("Created new org record for user:", uid);
+      if (req.method !== "GET") {
+        return res.status(405).json({ error: "GET only" });
       }
 
-      // Return success with user info
-      return res.status(200).json({
-        success: true,
-        uid: uid,
-        phoneNumber: phoneNumber,
-        email: email,
-        isNewUser: !orgSnap.exists,
-        message: "Authentication successful"
-      });
+      const pan = req.query.pan?.toString().trim().toUpperCase();
+      if (!pan) {
+        return res.status(400).json({ error: "PAN is required" });
+      }
+
+      try {
+        // Query orgs collection for matching PAN
+        const orgsSnapshot = await db.collection("orgs")
+          .where("pan", "==", pan)
+          .limit(1)
+          .get();
+
+        if (orgsSnapshot.empty) {
+          return res.status(404).json({ error: "No user found with this PAN" });
+        }
+
+        const orgData = orgsSnapshot.docs[0].data();
+        return res.status(200).json({ phone: orgData.phone });
+      } catch (err) {
+        console.error("getPhoneByPan error:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+      //  const uid = decodedToken.uid;
+      //       const phoneNumber = decodedToken.phone_number || null;
+      //       const email = decodedToken.email || null;
+
+      //       console.log("Authenticated user:", uid, "Phone:", phoneNumber);
+
+      //       // Check if user/org exists, if not create a basic record
+      //       const orgRef = db.collection("orgs").doc(uid);
+      //       const orgSnap = await orgRef.get();
+
+      //       if (!orgSnap.exists) {
+      //         // Create a new org record for first-time users
+      //         await orgRef.set({
+      //           uid,
+      //           phone: phoneNumber,
+      //           email: email,
+      //           created_at: new Date().toISOString(),
+      //           is_registered: false, // Flag to indicate profile completion needed
+      //         });
+      //         console.log("Created new org record for user:", uid);
+      //       }
+
+      //       // Return success with user info
+      //       return res.status(200).json({
+      //         success: true,
+      //         uid: uid,
+      //         phoneNumber: phoneNumber,
+      //         email: email,
+      //         isNewUser: !orgSnap.exists,
+      //         message: "Authentication successful"
+      //       });
 
     } catch (err) {
       console.error("Auth error:", err);
@@ -213,6 +240,7 @@ const authHandler = async (req, res) => {
     }
   });
 };
+
 
 function validateRegisterPayload(body) {
   const errors = [];
@@ -284,6 +312,8 @@ exports.register = functions.https.onRequest(async (req, res) => {
     }
   });
 });
+
+
 // exports.register = functions.https.onRequest(async (req, res) => {
 //   cors(req, res, async () => {
 //     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
