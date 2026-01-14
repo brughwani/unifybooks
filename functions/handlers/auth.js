@@ -176,64 +176,117 @@ const authHandler = async (req, res) => {
 
       // Extract user info from the decoded token
 
+      //     if (req.method !== "GET") {
+      //       return res.status(405).json({ error: "GET only" });
+      //     }
+
+      //     const pan = req.query.pan?.toString().trim().toUpperCase();
+      //     if (!pan) {
+      //       return res.status(400).json({ error: "PAN is required" });
+      //     }
+
+      //     try {
+      //       // Query orgs collection for matching PAN
+      //       const orgsSnapshot = await db.collection("orgs")
+      //         .where("pan", "==", pan)
+      //         .limit(1)
+      //         .get();
+
+      //       if (orgsSnapshot.empty) {
+      //         return res.status(404).json({ error: "No user found with this PAN" });
+      //       }
+
+      //       const orgData = orgsSnapshot.docs[0].data();
+      //       return res.status(200).json({ phone: orgData.phone });
+      //     } catch (err) {
+      //       console.error("getPhoneByPan error:", err);
+      //       return res.status(500).json({ error: "Internal server error" });
+      //     }
+      //     //  const uid = decodedToken.uid;
+      //     //       const phoneNumber = decodedToken.phone_number || null;
+      //     //       const email = decodedToken.email || null;
+
+      //     //       console.log("Authenticated user:", uid, "Phone:", phoneNumber);
+
+      //     //       // Check if user/org exists, if not create a basic record
+      //     //       const orgRef = db.collection("orgs").doc(uid);
+      //     //       const orgSnap = await orgRef.get();
+
+      //     //       if (!orgSnap.exists) {
+      //     //         // Create a new org record for first-time users
+      //     //         await orgRef.set({
+      //     //           uid,
+      //     //           phone: phoneNumber,
+      //     //           email: email,
+      //     //           created_at: new Date().toISOString(),
+      //     //           is_registered: false, // Flag to indicate profile completion needed
+      //     //         });
+      //     //         console.log("Created new org record for user:", uid);
+      //     //       }
+
+      //     //       // Return success with user info
+      //     //       return res.status(200).json({
+      //     //         success: true,
+      //     //         uid: uid,
+      //     //         phoneNumber: phoneNumber,
+      //     //         email: email,
+      //     //         isNewUser: !orgSnap.exists,
+      //     //         message: "Authentication successful"
+      //     //       });
+
+      //   } catch (err) {
+      //     console.error("Auth error:", err);
+      //     return res.status(500).json({ error: "Internal server error" });
+      //   }
+      // });
+
+      // return cors(req, res, async () => {
+      // try {
       if (req.method !== "GET") {
         return res.status(405).json({ error: "GET only" });
       }
-
       const pan = req.query.pan?.toString().trim().toUpperCase();
-      if (!pan) {
-        return res.status(400).json({ error: "PAN is required" });
-      }
-
-      try {
-        // Query orgs collection for matching PAN
-        const orgsSnapshot = await db.collection("orgs")
-          .where("pan", "==", pan)
-          .limit(1)
-          .get();
-
-        if (orgsSnapshot.empty) {
-          return res.status(404).json({ error: "No user found with this PAN" });
+      const authHeader = req.headers.authorization;
+      // CASE 1: PAN lookup (get phone number)
+      if (pan) {
+        try {
+          const orgsSnapshot = await db.collection("orgs")
+            .where("pan", "==", pan)
+            .limit(1)
+            .get();
+          if (orgsSnapshot.empty) {
+            return res.status(404).json({ error: "No user found with this PAN" });
+          }
+          const orgData = orgsSnapshot.docs[0].data();
+          return res.status(200).json({ phone: orgData.phone });
+        } catch (err) {
+          console.error("getPhoneByPan error:", err);
+          return res.status(500).json({ error: "Internal server error" });
         }
-
-        const orgData = orgsSnapshot.docs[0].data();
-        return res.status(200).json({ phone: orgData.phone });
-      } catch (err) {
-        console.error("getPhoneByPan error:", err);
-        return res.status(500).json({ error: "Internal server error" });
       }
-      //  const uid = decodedToken.uid;
-      //       const phoneNumber = decodedToken.phone_number || null;
-      //       const email = decodedToken.email || null;
+      // CASE 2: Token verification (after Firebase phone auth)
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const idToken = authHeader.split("Bearer ")[1];
 
-      //       console.log("Authenticated user:", uid, "Phone:", phoneNumber);
+        try {
+          const decodedToken = await admin.auth().verifyIdToken(idToken);
 
-      //       // Check if user/org exists, if not create a basic record
-      //       const orgRef = db.collection("orgs").doc(uid);
-      //       const orgSnap = await orgRef.get();
+          if (!decodedToken.phone_number) {
+            return res.status(403).json({ error: "User not authenticated with phone" });
+          }
+          console.log("Verified user:", decodedToken.uid, "Phone:", decodedToken.phone_number);
 
-      //       if (!orgSnap.exists) {
-      //         // Create a new org record for first-time users
-      //         await orgRef.set({
-      //           uid,
-      //           phone: phoneNumber,
-      //           email: email,
-      //           created_at: new Date().toISOString(),
-      //           is_registered: false, // Flag to indicate profile completion needed
-      //         });
-      //         console.log("Created new org record for user:", uid);
-      //       }
-
-      //       // Return success with user info
-      //       return res.status(200).json({
-      //         success: true,
-      //         uid: uid,
-      //         phoneNumber: phoneNumber,
-      //         email: email,
-      //         isNewUser: !orgSnap.exists,
-      //         message: "Authentication successful"
-      //       });
-
+          return res.status(200).json({
+            success: true,
+            uid: decodedToken.uid,
+            phoneNumber: decodedToken.phone_number,
+          });
+        } catch (verifyError) {
+          console.error("Token verification failed:", verifyError);
+          return res.status(401).json({ error: "Invalid or expired token" });
+        }
+      }
+      return res.status(400).json({ error: "PAN or Authorization token required" });
     } catch (err) {
       console.error("Auth error:", err);
       return res.status(500).json({ error: "Internal server error" });
