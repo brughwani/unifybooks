@@ -305,7 +305,7 @@ function validateRegisterPayload(body) {
 }
 
 exports.register = functions.https.onRequest(async (req, res) => {
-  cors(req, res, async () => {
+  return cors(req, res, async () => {
     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
     const errors = validateRegisterPayload(req.body);
