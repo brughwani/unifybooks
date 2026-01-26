@@ -65,6 +65,15 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
       }
     }
 
+    if (req.method === "GET" && action === "list") {
+      const { pan } = req.query;
+      if (!pan) {
+        return res.status(400).json({ error: "pan query parameter required" });
+      }
+      const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests").get();
+      return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }
+
     return { ok: false, reason: "no webhook or fcm_token" };
   } catch (err) {
     console.error("notifyCounterparty error:", err);
