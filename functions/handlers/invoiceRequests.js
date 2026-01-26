@@ -1,5 +1,6 @@
 const functions = require("firebase-functions/v2");
 const { db, auth, messaging, FieldValue } = require("../admin");
+const cors = require("cors")({ origin: true });
 
 async function requireAuth(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -72,46 +73,32 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
 }
 
 const invoiceRequestsHandler = async (req, res) => {
-  const user = await requireAuth(req, res);
-  if (!user) return;
-  const orgId = user.uid;
+  return cors(req, res, async () => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const orgId = user.uid;
 
-  try {
-    const { action } = req.query;
-    if (req.method === "POST" && action === "create") {
-      const { to_account, amount, description } = req.body;
-      if (!to_account || typeof amount !== "number") {
-        return res.status(400).json({ error: "to_account and numeric amount required" });
-      }
-      const data = {
-        from_org: orgId,
-        to_org: to_account,
-        amount,
-        description: description || "",
-        status: "pending",
-        created_at: new Date().toISOString()
-      };
-      const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
-
-      await db.collection("orgs").doc(orgId).collection("ledgers").doc(to_account).set({
-        entries: FieldValue.arrayUnion({
-          id: `inv_${ref.id}`,
-          type: "debit",
+    try {
+      const { action } = req.query;
+      if (req.method === "POST" && action === "create") {
+        const { to_account, amount, description } = req.body;
+        if (!to_account || typeof amount !== "number") {
+          return res.status(400).json({ error: "to_account and numeric amount required" });
+        }
+        const data = {
+          from_org: orgId,
+          to_org: to_account,
           amount,
           description: description || "",
-          date: new Date().toISOString(),
-          reference: ref.id,
-          from: orgId,
-          to: to_account
-        })
-      }, { merge: true });
+          status: "pending",
+          created_at: new Date().toISOString()
+        };
+        const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
 
-      const counterpartyDoc = await db.collection("orgs").doc(to_account).get();
-      if (counterpartyDoc.exists) {
-        await db.collection("orgs").doc(to_account).collection("ledgers").doc(orgId).set({
+        await db.collection("orgs").doc(orgId).collection("ledgers").doc(to_account).set({
           entries: FieldValue.arrayUnion({
             id: `inv_${ref.id}`,
-            type: "credit",
+            type: "debit",
             amount,
             description: description || "",
             date: new Date().toISOString(),
@@ -121,36 +108,52 @@ const invoiceRequestsHandler = async (req, res) => {
           })
         }, { merge: true });
 
-        const edgeId = orgId < to_account ? `${orgId}_${to_account}` : `${to_account}_${orgId}`;
-        await db.collection("network_edges").doc(edgeId).set({
-          a: orgId,
-          b: to_account,
-          last_txn: new Date().toISOString(),
-          total_volume: FieldValue.increment(amount)
-        }, { merge: true });
+        const counterpartyDoc = await db.collection("orgs").doc(to_account).get();
+        if (counterpartyDoc.exists) {
+          await db.collection("orgs").doc(to_account).collection("ledgers").doc(orgId).set({
+            entries: FieldValue.arrayUnion({
+              id: `inv_${ref.id}`,
+              type: "credit",
+              amount,
+              description: description || "",
+              date: new Date().toISOString(),
+              reference: ref.id,
+              from: orgId,
+              to: to_account
+            })
+          }, { merge: true });
+
+          const edgeId = orgId < to_account ? `${orgId}_${to_account}` : `${to_account}_${orgId}`;
+          await db.collection("network_edges").doc(edgeId).set({
+            a: orgId,
+            b: to_account,
+            last_txn: new Date().toISOString(),
+            total_volume: FieldValue.increment(amount)
+          }, { merge: true });
+        }
+
+        const notifyPayload = {
+          invoice_id: ref.id,
+          from: orgId,
+          to: to_account,
+          amount,
+          description: description || ""
+        };
+        notifyCounterparty(to_account, "invoice_request_created", notifyPayload).then((r) => console.log("notify result:", r)).catch((e) => console.warn("notify error:", e));
+
+        return res.status(201).json({ id: ref.id });
       }
 
-      const notifyPayload = {
-        invoice_id: ref.id,
-        from: orgId,
-        to: to_account,
-        amount,
-        description: description || ""
-      };
-      notifyCounterparty(to_account, "invoice_request_created", notifyPayload).then((r) => console.log("notify result:", r)).catch((e) => console.warn("notify error:", e));
-
-      return res.status(201).json({ id: ref.id });
+      if (req.method === "GET" && action === "list") {
+        const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests").get();
+        return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }
+      return res.status(405).json({ error: "Method not allowed or missing action" });
+    } catch (err) {
+      console.error("Invoice Requests error:", err);
+      return res.status(500).json({ error: "Internal server error" });
     }
-
-    if (req.method === "GET" && action === "list") {
-      const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests").get();
-      return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-    }
-    return res.status(405).json({ error: "Method not allowed or missing action" });
-  } catch (err) {
-    console.error("Invoice Requests error:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
+  });
 };
 
 module.exports = functions.https.onRequest(invoiceRequestsHandler);
