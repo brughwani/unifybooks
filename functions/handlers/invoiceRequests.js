@@ -81,10 +81,24 @@ const invoiceRequestsHandler = async (req, res) => {
     try {
       const { action } = req.query;
       if (req.method === "POST" && action === "create") {
-        const { to_account, amount, description } = req.body;
-        if (!to_account || typeof amount !== "number") {
-          return res.status(400).json({ error: "to_account and numeric amount required" });
+        const { from_account, to_account, amount, description } = req.body;
+
+        // Validate inputs
+        if (!from_account || !to_account || typeof amount !== "number") {
+          return res.status(400).json({ error: "from_account, to_account and numeric amount required" });
         }
+
+        // Use from_account (PAN) instead of user.uid
+        const orgId = from_account;
+
+
+
+        // const { action } = req.query;
+        // if (req.method === "POST" && action === "create") {
+        //   const { to_account, amount, description } = req.body;
+        //   if (!to_account || typeof amount !== "number") {
+        //     return res.status(400).json({ error: "to_account and numeric amount required" });
+        //   }
         const data = {
           from_org: orgId,
           to_org: to_account,
