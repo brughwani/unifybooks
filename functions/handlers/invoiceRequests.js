@@ -65,15 +65,6 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
       }
     }
 
-    if (req.method === "GET" && action === "list") {
-      const { pan } = req.query;
-      if (!pan) {
-        return res.status(400).json({ error: "pan query parameter required" });
-      }
-      const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests").get();
-      return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-    }
-
     return { ok: false, reason: "no webhook or fcm_token" };
   } catch (err) {
     console.error("notifyCounterparty error:", err);
@@ -117,6 +108,9 @@ const invoiceRequestsHandler = async (req, res) => {
           created_at: new Date().toISOString()
         };
         const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
+
+        // Also write a copy to the counterparty's invoice_requests so they can query it
+        await db.collection("orgs").doc(to_account).collection("invoice_requests").doc(ref.id).set(data);
 
         await db.collection("orgs").doc(orgId).collection("ledgers").doc(to_account).set({
           entries: FieldValue.arrayUnion({
@@ -169,6 +163,14 @@ const invoiceRequestsHandler = async (req, res) => {
 
       if (req.method === "GET" && action === "list") {
         const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests").get();
+        return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }
+
+      // Counterparty can fetch invoices sent TO them
+      if (req.method === "GET" && action === "incoming") {
+        const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests")
+          .where("to_org", "==", orgId)
+          .get();
         return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       }
       return res.status(405).json({ error: "Method not allowed or missing action" });
