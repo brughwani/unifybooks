@@ -39,4 +39,4 @@ const inventoryHandler = async (req, res) => {
   }
 };
 
-module.exports = functions.https.onRequest(inventoryHandler);
+module.exports = inventoryHandler;

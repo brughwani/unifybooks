@@ -88,10 +88,13 @@ const vendorsHandler = async (req, res) => {
     return res.status(405).json({ error: "Method not allowed or missing action" });
   } catch (err) {
     console.error("Vendors error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({
+      error: "Internal server error",
+      message: err.message,
+      code: err.code,
+    });
   }
 };
 
-module.exports = functions.https.onRequest((req, res) =>
-  cors(req, res, async () => { await vendorsHandler(req, res); })
-);
+module.exports = (req, res) =>
+  cors(req, res, async () => { await vendorsHandler(req, res); });

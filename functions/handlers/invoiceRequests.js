@@ -179,4 +179,4 @@ const invoiceRequestsHandler = async (req, res) => {
   });
 };
 
-module.exports = functions.https.onRequest(invoiceRequestsHandler);
+module.exports = invoiceRequestsHandler;

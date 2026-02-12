@@ -304,7 +304,7 @@ function validateRegisterPayload(body) {
   return errors;
 }
 
-exports.register = functions.https.onRequest(async (req, res) => {
+exports.register = async (req, res) => {
   return cors(req, res, async () => {
     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
@@ -321,50 +321,43 @@ exports.register = functions.https.onRequest(async (req, res) => {
     const uid = `phone:${phone}`;
 
     try {
-      // ensure auth user exists
+      // Step 1: Create or get auth user (do this FIRST)
+      try {
+        await auth.getUser(uid);
+        console.log(`[Register] Auth user ${uid} already exists.`);
+      } catch (authErr) {
+        console.log(`[Register] Creating new auth user: ${uid}`);
+        await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
+      }
 
-      await Promise.all([
-        // 1. Create or get auth user
-        auth.getUser(uid).catch(() =>
-          auth.createUser({ uid, phoneNumber: phone, displayName: shopName })
-        ),
-        // 2. Create or update org document (use set with merge to avoid NOT_FOUND)
-        db.collection("orgs").doc(uid).set(
-          {
-            pan,
-            ...(gst ? { gst } : {}),
-            phone,
-            owner_name: ownerName,
-            shop_name: shopName,
-            address: address,
-            created_at: new Date().toISOString(),
-          },
-          { merge: true }
-        ),
-      ]);
-      // create org document (id = uid) if not exists
-      // const orgRef = db.collection("orgs").doc(uid);
-      // const orgSnap = await orgRef.get();
-      // if (!orgSnap.exists) {
-      //   await orgRef.set({
-      //     pan,
-      //     ...(gst ? { gst } : {}),
-      //     phone,
-      //     owner_name: ownerName,
-      //     shop_name: shopName,
-      //     created_at: new Date().toISOString(),
-      //   });
-      // }
+      // Step 2: Create/update Firestore org document (AFTER auth succeeds)
+      console.log(`[Register] Writing Firestore doc: orgs/${uid}`);
+      await db.collection("orgs").doc(uid).set(
+        {
+          pan,
+          ...(gst ? { gst } : {}),
+          phone,
+          owner_name: ownerName,
+          shop_name: shopName,
+          address: address,
+          created_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
 
-      // issue custom token so client can sign in
+      // Step 3: Issue custom token so client can sign in
       const customToken = await auth.createCustomToken(uid);
       return res.status(200).json({ customToken });
     } catch (err) {
       console.error("Register error:", err);
-      return res.status(500).json({ error: "Internal server error" });
+      return res.status(500).json({
+        error: "Internal server error",
+        message: err.message,
+        code: err.code,
+      });
     }
   });
-});
+};
 
 
 // exports.register = functions.https.onRequest(async (req, res) => {
@@ -438,7 +431,7 @@ exports.register = functions.https.onRequest(async (req, res) => {
 // });
 // module.exports = functions.https.onRequest(authHandler);
 
-exports.auth = functions.https.onRequest(authHandler);
+exports.auth = authHandler;
 // exports.register = functions.https.onRequest(async (req, res) => {
 //   cors(req, res, async () => {
 //     if (req.method !== "POST") return res.status(405).json({ error: "POST only" });

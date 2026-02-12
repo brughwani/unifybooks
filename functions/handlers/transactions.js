@@ -36,4 +36,4 @@ const transactionsHandler = async (req, res) => {
   }
 };
 
-module.exports = functions.https.onRequest(transactionsHandler);
+module.exports = transactionsHandler;
