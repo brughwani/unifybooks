@@ -1,4 +1,4 @@
-const functions = require("firebase-functions/v2");
+
 const { db, auth } = require("../admin");
 
 async function requireAuth(req, res) {

@@ -1,4 +1,4 @@
-const functions = require("firebase-functions/v2");
+
 const { db, auth, messaging, FieldValue } = require("../admin");
 const cors = require("cors")({ origin: true });
 
