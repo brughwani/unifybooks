@@ -133,148 +133,65 @@ exports.getPhoneByPan = functions.https.onCall(async (data, context) => {
 const authHandler = async (req, res) => {
   return cors(req, res, async () => {
     try {
-      // console.log("Received request:", req.method);
-      // if (req.method !== "POST") {
-      //   return res.status(405).json({ error: "POST only" });
-      // }
+      console.log(`[AuthHandler] Request received: ${req.method} ${req.url}`);
 
-      // // Get the Firebase ID token from Authorization header or request body
-      // let idToken = null;
+      // Log service account info if possible for debugging
+      try {
+        const app = admin.app();
+        const projectId = app.options.projectId || process.env.GCLOUD_PROJECT;
+        console.log(`[AuthHandler] Running in project: ${projectId}`);
+      } catch (e) {
+        console.log("[AuthHandler] Could not get project ID", e.message);
+      }
 
-      // // Check Authorization header first (Bearer token)
-      // const authHeader = req.headers.authorization;
-      // if (authHeader && authHeader.startsWith("Bearer ")) {
-      //   idToken = authHeader.split("Bearer ")[1];
-      // }
-
-      // Fallback to request body
-      // if (!idToken && req.body && req.body.idToken) {
-      //   idToken = req.body.idToken;
-      // }
-
-      // if (!idToken) {
-      //   return res.status(401).json({
-      //     error: "No authentication token provided",
-      //     message: "Please provide Firebase ID token in Authorization header (Bearer <token>) or in request body as 'idToken'"
-      //   });
-      // }
-
-      // // Verify the Firebase ID token
-      // let decodedToken;
-      // try {
-      //   decodedToken = await admin.auth().verifyIdToken(idToken);
-      // } catch (verifyError) {
-      //   console.error("Token verification failed:", verifyError);
-
-      //   if (verifyError.code === "auth/id-token-expired") {
-      //     return res.status(401).json({ error: "Token expired. Please re-authenticate." });
-      //   } else if (verifyError.code === "auth/argument-error" || verifyError.code === "auth/invalid-id-token") {
-      //     return res.status(401).json({ error: "Invalid token provided." });
-      //   }
-      //   return res.status(401).json({ error: "Token verification failed." });
-      // }
-
-      // Extract user info from the decoded token
-
-      //     if (req.method !== "GET") {
-      //       return res.status(405).json({ error: "GET only" });
-      //     }
-
-      //     const pan = req.query.pan?.toString().trim().toUpperCase();
-      //     if (!pan) {
-      //       return res.status(400).json({ error: "PAN is required" });
-      //     }
-
-      //     try {
-      //       // Query orgs collection for matching PAN
-      //       const orgsSnapshot = await db.collection("orgs")
-      //         .where("pan", "==", pan)
-      //         .limit(1)
-      //         .get();
-
-      //       if (orgsSnapshot.empty) {
-      //         return res.status(404).json({ error: "No user found with this PAN" });
-      //       }
-
-      //       const orgData = orgsSnapshot.docs[0].data();
-      //       return res.status(200).json({ phone: orgData.phone });
-      //     } catch (err) {
-      //       console.error("getPhoneByPan error:", err);
-      //       return res.status(500).json({ error: "Internal server error" });
-      //     }
-      //     //  const uid = decodedToken.uid;
-      //     //       const phoneNumber = decodedToken.phone_number || null;
-      //     //       const email = decodedToken.email || null;
-
-      //     //       console.log("Authenticated user:", uid, "Phone:", phoneNumber);
-
-      //     //       // Check if user/org exists, if not create a basic record
-      //     //       const orgRef = db.collection("orgs").doc(uid);
-      //     //       const orgSnap = await orgRef.get();
-
-      //     //       if (!orgSnap.exists) {
-      //     //         // Create a new org record for first-time users
-      //     //         await orgRef.set({
-      //     //           uid,
-      //     //           phone: phoneNumber,
-      //     //           email: email,
-      //     //           created_at: new Date().toISOString(),
-      //     //           is_registered: false, // Flag to indicate profile completion needed
-      //     //         });
-      //     //         console.log("Created new org record for user:", uid);
-      //     //       }
-
-      //     //       // Return success with user info
-      //     //       return res.status(200).json({
-      //     //         success: true,
-      //     //         uid: uid,
-      //     //         phoneNumber: phoneNumber,
-      //     //         email: email,
-      //     //         isNewUser: !orgSnap.exists,
-      //     //         message: "Authentication successful"
-      //     //       });
-
-      //   } catch (err) {
-      //     console.error("Auth error:", err);
-      //     return res.status(500).json({ error: "Internal server error" });
-      //   }
-      // });
-
-      // return cors(req, res, async () => {
-      // try {
       if (req.method !== "GET") {
         return res.status(405).json({ error: "GET only" });
       }
+
       const pan = req.query.pan?.toString().trim().toUpperCase();
       const authHeader = req.headers.authorization;
+
       // CASE 1: PAN lookup (get phone number)
       if (pan) {
         try {
+          console.log(`[AuthHandler] Looking up PAN: ${pan}`);
           const orgsSnapshot = await db.collection("orgs")
             .where("pan", "==", pan)
             .limit(1)
             .get();
+
           if (orgsSnapshot.empty) {
+            console.log(`[AuthHandler] No user found for PAN: ${pan}`);
             return res.status(404).json({ error: "No user found with this PAN" });
           }
+
           const orgData = orgsSnapshot.docs[0].data();
+          console.log(`[AuthHandler] Found user for PAN: ${pan}, returning phone.`);
           return res.status(200).json({ phone: orgData.phone });
         } catch (err) {
-          console.error("getPhoneByPan error:", err);
-          return res.status(500).json({ error: "Internal server error" });
+          console.error("[AuthHandler] getPhoneByPan error:", err);
+          return res.status(500).json({
+            error: "Internal server error during PAN lookup",
+            details: err.message,
+            code: err.code
+          });
         }
       }
+
       // CASE 2: Token verification (after Firebase phone auth)
       if (authHeader && authHeader.startsWith("Bearer ")) {
         const idToken = authHeader.split("Bearer ")[1];
 
         try {
+          console.log("[AuthHandler] Verifying ID token...");
           const decodedToken = await admin.auth().verifyIdToken(idToken);
 
           if (!decodedToken.phone_number) {
+            console.warn("[AuthHandler] Token verified but no phone_number claim.");
             return res.status(403).json({ error: "User not authenticated with phone" });
           }
-          console.log("Verified user:", decodedToken.uid, "Phone:", decodedToken.phone_number);
+
+          console.log("[AuthHandler] Token verified successfully:", decodedToken.uid, "Phone:", decodedToken.phone_number);
 
           return res.status(200).json({
             success: true,
@@ -282,14 +199,26 @@ const authHandler = async (req, res) => {
             phoneNumber: decodedToken.phone_number,
           });
         } catch (verifyError) {
-          console.error("Token verification failed:", verifyError);
-          return res.status(401).json({ error: "Invalid or expired token" });
+          console.error("[AuthHandler] Token verification failed:", verifyError);
+          console.error("[AuthHandler] Error code:", verifyError.code);
+          console.error("[AuthHandler] Error message:", verifyError.message);
+
+          return res.status(401).json({
+            error: "Invalid or expired token",
+            details: verifyError.message,
+            code: verifyError.code
+          });
         }
       }
+
       return res.status(400).json({ error: "PAN or Authorization token required" });
     } catch (err) {
-      console.error("Auth error:", err);
-      return res.status(500).json({ error: "Internal server error" });
+      console.error("[AuthHandler] Top-level error:", err);
+      return res.status(500).json({
+        error: "Internal server error",
+        message: err.message,
+        code: err.code
+      });
     }
   });
 };
@@ -323,11 +252,18 @@ exports.register = async (req, res) => {
     try {
       // Step 1: Create or get auth user (do this FIRST)
       try {
+        console.log(`[Register] Checking if user ${uid} exists...`);
         await auth.getUser(uid);
         console.log(`[Register] Auth user ${uid} already exists.`);
       } catch (authErr) {
-        console.log(`[Register] Creating new auth user: ${uid}`);
-        await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
+        if (authErr.code === 'auth/user-not-found') {
+          console.log(`[Register] Creating new auth user: ${uid}`);
+          await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
+          console.log(`[Register] User created: ${uid}`);
+        } else {
+          console.error(`[Register] auth.getUser failed:`, authErr);
+          throw authErr;
+        }
       }
 
       // Step 2: Create/update Firestore org document (AFTER auth succeeds)
@@ -345,13 +281,21 @@ exports.register = async (req, res) => {
         { merge: true }
       );
 
+      console.log(`[Register] Firestore write successful.`);
+
       // Step 3: Issue custom token so client can sign in
+      console.log(`[Register] Creating custom token for ${uid}...`);
       const customToken = await auth.createCustomToken(uid);
+      console.log(`[Register] Custom token created successfully.`);
+
       return res.status(200).json({ customToken });
     } catch (err) {
-      console.error("Register error:", err);
+      console.error("[Register] Critical error:", err);
+      console.error("[Register] Error code:", err.code);
+      console.error("[Register] Error message:", err.message);
+
       return res.status(500).json({
-        error: "Internal server error",
+        error: "Internal server error during registration",
         message: err.message,
         code: err.code,
       });
