@@ -197,16 +197,45 @@ const invoiceRequestsHandler = async (req, res) => {
           return res.status(400).json({ error: "id, from_pan and to_pan required" });
         }
 
-        // Update status on both copies
+        const now = new Date().toISOString();
+
+        // 1. Fetch the invoice to get items for inventory
+        const invoiceRef = db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id);
+        const invoiceSnap = await invoiceRef.get();
+        if (!invoiceSnap.exists) {
+          return res.status(404).json({ error: "Invoice not found" });
+        }
+        const invoiceData = invoiceSnap.data();
+
+        // 2. Update status on both copies
         const batch = db.batch();
         batch.update(
-          db.collection("orgs").doc(to_pan).collection("invoices").doc(id),
-          { status: "accepted", updatedAt: new Date().toISOString() }
+          db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id),
+          { status: "accepted", updatedAt: now, acceptedAt: now, paymentStatus: "unpaid" }
         );
         batch.update(
-          db.collection("orgs").doc(from_pan).collection("invoices").doc(id),
-          { status: "accepted", updatedAt: new Date().toISOString() }
+          db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id),
+          { status: "accepted", updatedAt: now, acceptedAt: now, paymentStatus: "unpaid" }
         );
+
+        // 3. Update receiver's inventory with items from the invoice
+        const items = invoiceData.items || [];
+        for (const item of items) {
+          const itemName = item.name || item.itemId || "unknown";
+          const qty = item.quantity || 0;
+          const unitPrice = item.unitPrice || 0;
+          const inventoryRef = db.collection("orgs").doc(to_pan).collection("inventory").doc(itemName);
+          // Merge: increment quantity, update cost price
+          batch.set(inventoryRef, {
+            name: itemName,
+            quantity: FieldValue.increment(qty),
+            costPrice: unitPrice,
+            lastUpdated: now,
+            lastInvoiceId: id,
+            fromOrg: from_pan,
+          }, { merge: true });
+        }
+
         await batch.commit();
 
         notifyCounterparty(from_pan, "invoice_accepted", { invoice_id: id, by: to_pan })
@@ -224,11 +253,11 @@ const invoiceRequestsHandler = async (req, res) => {
 
         const batch = db.batch();
         batch.update(
-          db.collection("orgs").doc(to_pan).collection("invoices").doc(id),
+          db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id),
           { status: "rejected", updatedAt: new Date().toISOString() }
         );
         batch.update(
-          db.collection("orgs").doc(from_pan).collection("invoices").doc(id),
+          db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id),
           { status: "rejected", updatedAt: new Date().toISOString() }
         );
         await batch.commit();
