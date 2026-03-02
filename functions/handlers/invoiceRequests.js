@@ -81,7 +81,11 @@ const invoiceRequestsHandler = async (req, res) => {
     try {
       const { action } = req.query;
       if (req.method === "POST" && action === "create") {
-        const { from_account, to_account, amount, description } = req.body;
+        const body = req.body;
+        const from_account = body.from_account || body.fromOrgPan || "";
+        const to_account = body.to_account || body.toOrgPan || "";
+        const amount = body.amount || body.grandTotal || 0;
+        const description = body.description || body.notes || "";
 
         // Validate inputs
         if (!from_account || !to_account || typeof amount !== "number") {
@@ -91,21 +95,32 @@ const invoiceRequestsHandler = async (req, res) => {
         // Use from_account (PAN) instead of user.uid
         const orgId = from_account;
 
-
-
-        // const { action } = req.query;
-        // if (req.method === "POST" && action === "create") {
-        //   const { to_account, amount, description } = req.body;
-        //   if (!to_account || typeof amount !== "number") {
-        //     return res.status(400).json({ error: "to_account and numeric amount required" });
-        //   }
+        // Store ALL fields from the Flutter payload + CF fields for backwards compat
         const data = {
+          // Cloud Function field names
           from_org: orgId,
           to_org: to_account,
           amount,
-          description: description || "",
-          status: "pending",
-          created_at: new Date().toISOString()
+          description: description,
+          status: body.status || "pending",
+          created_at: new Date().toISOString(),
+          // Flutter field names (so fromMap works directly)
+          fromOrgPan: from_account,
+          fromOrgName: body.fromOrgName || "",
+          toOrgPan: to_account,
+          toOrgName: body.toOrgName || "",
+          items: body.items || [],
+          subtotal: body.subtotal || 0,
+          gst: body.gst || 0,
+          grandTotal: amount,
+          createdAt: new Date().toISOString(),
+          invoiceNumber: body.invoiceNumber || "",
+          notes: description,
+          driverName: body.driverName || null,
+          driverPhone: body.driverPhone || null,
+          vehicleNumber: body.vehicleNumber || null,
+          paymentStatus: body.paymentStatus || "",
+          disputeStatus: body.disputeStatus || "",
         };
         const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
 
@@ -162,7 +177,9 @@ const invoiceRequestsHandler = async (req, res) => {
       }
 
       if (req.method === "GET" && action === "list") {
-        const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests").get();
+        // Use PAN from query param if provided, otherwise fall back to user.uid
+        const pan = req.query.pan || orgId;
+        const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests").get();
         return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       }
 
@@ -173,7 +190,57 @@ const invoiceRequestsHandler = async (req, res) => {
           .get();
         return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       }
+      // ── Accept a pending invoice ─────────────────────────────────────
+      if (req.method === "POST" && action === "accept") {
+        const { id, from_pan, to_pan } = req.body;
+        if (!id || !from_pan || !to_pan) {
+          return res.status(400).json({ error: "id, from_pan and to_pan required" });
+        }
+
+        // Update status on both copies
+        const batch = db.batch();
+        batch.update(
+          db.collection("orgs").doc(to_pan).collection("invoices").doc(id),
+          { status: "accepted", updatedAt: new Date().toISOString() }
+        );
+        batch.update(
+          db.collection("orgs").doc(from_pan).collection("invoices").doc(id),
+          { status: "accepted", updatedAt: new Date().toISOString() }
+        );
+        await batch.commit();
+
+        notifyCounterparty(from_pan, "invoice_accepted", { invoice_id: id, by: to_pan })
+          .catch((e) => console.warn("notify error:", e));
+
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Reject a pending invoice ──────────────────────────────────────
+      if (req.method === "POST" && action === "reject") {
+        const { id, from_pan, to_pan } = req.body;
+        if (!id || !from_pan || !to_pan) {
+          return res.status(400).json({ error: "id, from_pan and to_pan required" });
+        }
+
+        const batch = db.batch();
+        batch.update(
+          db.collection("orgs").doc(to_pan).collection("invoices").doc(id),
+          { status: "rejected", updatedAt: new Date().toISOString() }
+        );
+        batch.update(
+          db.collection("orgs").doc(from_pan).collection("invoices").doc(id),
+          { status: "rejected", updatedAt: new Date().toISOString() }
+        );
+        await batch.commit();
+
+        notifyCounterparty(from_pan, "invoice_rejected", { invoice_id: id, by: to_pan })
+          .catch((e) => console.warn("notify error:", e));
+
+        return res.status(200).json({ ok: true });
+      }
+
       return res.status(405).json({ error: "Method not allowed or missing action" });
+
     } catch (err) {
       console.error("Invoice Requests error:", err);
       return res.status(500).json({ error: "Internal server error" });

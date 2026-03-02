@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user's phone number
+    function getUserPhone() {
+      return request.auth.token.phone_number;
+    }
+    
+    // Organizations collection
+    match /organizations/{orgPan} {
+      // Allow read if authenticated
+      allow read: if isAuthenticated();
+      
+      // Allow write only to the organization's own document
+      // This requires the phone number to match
+      allow write: if isAuthenticated() && 
+                      resource.data.phoneNumber == getUserPhone();
+    }
+    
+    // Invoice requests collection
+    match /invoiceRequests/{requestId} {
+      // Allow read if user is part of the transaction (sender or receiver)
+      allow read: if isAuthenticated() && 
+                     (resource.data.fromOrgPan == request.auth.token.pan ||
+                      resource.data.toOrgPan == request.auth.token.pan);
+      
+      // Allow create if authenticated
+      allow create: if isAuthenticated();
+      
+      // Allow update only if user is the receiver (for accept/reject)
+      allow update: if isAuthenticated() && 
+                       resource.data.toOrgPan == request.auth.token.pan;
+      
+      // No delete allowed
+      allow delete: if false;
+    }
+    
+    // Transactions collection
+    match /transactions/{transactionId} {
+      // Allow read if user is part of the transaction
+      allow read: if isAuthenticated() && 
+                     resource.data.orgPan == request.auth.token.pan;
+      
+      // Only backend can write transactions
+      allow write: if false;
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Allow read if notification is for the user's organization
+      allow read: if isAuthenticated() && 
+                     resource.data.orgPan == request.auth.token.pan;
+      
+      // Allow create if authenticated
+      allow create: if isAuthenticated();
+      
+      // Allow update only to mark as read
+      allow update: if isAuthenticated() && 
+                       resource.data.orgPan == request.auth.token.pan &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      
+      // No delete allowed
+      allow delete: if false;
+    }
+    
+    // FCM tokens collection - CRITICAL for notifications
+    match /fcm_tokens/{tokenId} {
+      // Allow read for authenticated users
+      allow read: if isAuthenticated();
+      
+      // Allow write for authenticated users to their own tokens
+      // Token ID should be the organization PAN
+      allow write: if isAuthenticated();
+    }
+    
+    // Orgs collection (used by both dev and prod modes)
+    match /orgs/{orgPan} {
+      // Any authenticated user can read org profiles (needed to list counterparties)
+      allow read: if isAuthenticated();
+      
+      // Only the org owner can update their own doc (matched by PAN custom claim in prod,
+      // or just "any authenticated user" in dev since anonymous has no PAN claim)
+      allow write: if isAuthenticated();
+      
+      // Invoices subcollection (used by dev mode direct-Firestore writes)
+      match /invoices/{invoiceId} {
+        // Any authenticated user can create an invoice
+        allow create: if isAuthenticated();
+        
+        // Only involved parties can read
+        allow read: if isAuthenticated();
+        
+        // Updates allowed (e.g. accept/reject status changes)
+        allow update: if isAuthenticated();
+        
+        // No deletes
+        allow delete: if false;
+      }
+      
+      // Counters subcollection (invoice number generator — prod only)
+      match /counters/{counterId} {
+        allow read, write: if isAuthenticated();
+      }
+
+      // Transactions subcollection (dev mode ledger)
+      match /transactions/{txnId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

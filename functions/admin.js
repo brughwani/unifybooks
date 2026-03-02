@@ -10,5 +10,7 @@ const db = admin.firestore();
 const auth = admin.auth();
 const messaging = admin.messaging();
 
+const FieldValue = admin.firestore.FieldValue;
+
 // 3. Export everything once
-module.exports = { db, auth, messaging, admin };
+module.exports = { db, auth, messaging, admin, FieldValue };

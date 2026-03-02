@@ -256,7 +256,7 @@ exports.register = async (req, res) => {
         await auth.getUser(uid);
         console.log(`[Register] Auth user ${uid} already exists.`);
       } catch (authErr) {
-        if (authErr.code === 'auth/user-not-found') {
+        if (authErr.code === "auth/user-not-found") {
           console.log(`[Register] Creating new auth user: ${uid}`);
           await auth.createUser({ uid, phoneNumber: phone, displayName: shopName });
           console.log(`[Register] User created: ${uid}`);
