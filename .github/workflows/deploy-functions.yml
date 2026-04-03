@@ -22,7 +22,9 @@ jobs:
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          MIXPANEL_TOKEN: ${{ secrets.MIXPANEL_TOKEN }}
         working-directory: functions
         run: |
           npm install -g firebase-tools@latest
+          echo "MIXPANEL_TOKEN=$MIXPANEL_TOKEN" > .env
           npx firebase deploy --only functions --project "$FIREBASE_PROJECT_ID" --token "$FIREBASE_TOKEN"
