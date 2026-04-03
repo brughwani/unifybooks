@@ -2,6 +2,7 @@ const functions = require("firebase-functions/v2");
 const { db, auth } = require("../admin");
 const admin = require("firebase-admin");
 const cors = require("cors")({ origin: true });
+const { track, identify } = require("../mixpanel");
 // ---------------- MOCK GST + OTP SERVICES ----------------
 // async function verifyGST(gst_number) {
 //   // Replace with real GSTN API integration
@@ -167,6 +168,7 @@ const authHandler = async (req, res) => {
 
           const orgData = orgsSnapshot.docs[0].data();
           console.log(`[AuthHandler] Found user for PAN: ${pan}, returning phone.`);
+          track("user_pan_lookup", pan, { found: true });
           return res.status(200).json({ phone: orgData.phone });
         } catch (err) {
           console.error("[AuthHandler] getPhoneByPan error:", err);
@@ -287,6 +289,16 @@ exports.register = async (req, res) => {
       console.log(`[Register] Creating custom token for ${uid}...`);
       const customToken = await auth.createCustomToken(uid);
       console.log(`[Register] Custom token created successfully.`);
+
+      // Track registration in Mixpanel
+      identify(uid, {
+        $phone: phone,
+        pan,
+        shop_name: shopName,
+        owner_name: ownerName,
+        $created: new Date().toISOString(),
+      });
+      track("user_registered", uid, { pan, shop_name: shopName, phone });
 
       return res.status(200).json({ customToken });
     } catch (err) {

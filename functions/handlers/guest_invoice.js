@@ -1,5 +1,6 @@
 const { db, FieldValue } = require("../admin");
 const cors = require("cors")({ origin: true });
+const { track } = require("../mixpanel");
 
 // Notification helper (re-used from invoiceRequests or simplified)
 async function notifyCounterparty(counterpartyGst, eventType, payload) {
@@ -58,6 +59,12 @@ const guestInvoiceHandler = async (req, res) => {
                     invoiceNumber: invoiceData.invoiceNumber,
                     notes: invoiceData.notes || invoiceData.description,
                 };
+
+                track("guest_invoice_viewed", to_pan, {
+                    invoice_id: id,
+                    from_org: invoiceData.fromOrgPan || "",
+                    status: invoiceData.status,
+                });
 
                 return res.status(200).json(safeData);
             }
@@ -120,6 +127,12 @@ const guestInvoiceHandler = async (req, res) => {
                     await batch.commit();
                     notifyCounterparty(from_pan, "invoice_accepted", { invoice_id: id, by: to_pan }).catch(e => console.warn(e));
 
+                    track("guest_invoice_accepted", to_pan, {
+                        invoice_id: id,
+                        from_org: from_pan,
+                        amount: invoiceData.grandTotal || invoiceData.amount || 0,
+                    });
+
                     return res.status(200).json({ ok: true, message: "Invoice accepted successfully" });
 
                 } else if (response_action === "reject") {
@@ -132,6 +145,11 @@ const guestInvoiceHandler = async (req, res) => {
 
                     await batch.commit();
                     notifyCounterparty(from_pan, "invoice_rejected", { invoice_id: id, by: to_pan }).catch(e => console.warn(e));
+
+                    track("guest_invoice_rejected", to_pan, {
+                        invoice_id: id,
+                        from_org: from_pan,
+                    });
 
                     return res.status(200).json({ ok: true, message: "Invoice rejected successfully" });
                 }

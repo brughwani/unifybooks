@@ -1,5 +1,6 @@
 
 const { db, auth } = require("../admin");
+const { track } = require("../mixpanel");
 
 async function requireAuth(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -26,6 +27,7 @@ const inventoryHandler = async (req, res) => {
     if (req.method === "POST" && action === "create") {
       const data = { ...req.body, created_at: new Date().toISOString() };
       const ref = await db.collection("orgs").doc(orgId).collection("items").add(data);
+      track("inventory_item_added", orgId, { item_id: ref.id, item_name: req.body.name || "" });
       return res.status(201).json({ id: ref.id });
     }
     if (req.method === "GET" && action === "list") {

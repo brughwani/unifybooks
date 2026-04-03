@@ -1,6 +1,7 @@
 
 const { db, auth } = require("../admin");
 const cors = require("cors")({ origin: true });
+const { track } = require("../mixpanel");
 
 async function requireAuth(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -75,6 +76,7 @@ const vendorsHandler = async (req, res) => {
       const data = { ...vendor };
       const ref = await db.collection("orgs").doc(orgId).collection("accounts").add(data);
       await db.collection("orgs").doc(orgId).collection("ledgers").doc(ref.id).set({ entries: [] });
+      track("vendor_added", orgId, { vendor_pan: vendor.pan, vendor_shop: vendor.shop_name });
       return res.status(201).json({ id: ref.id });
     }
 

@@ -1,6 +1,7 @@
 
 const { db, auth, messaging, FieldValue } = require("../admin");
 const cors = require("cors")({ origin: true });
+const { track } = require("../mixpanel");
 
 async function requireAuth(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -173,6 +174,14 @@ const invoiceRequestsHandler = async (req, res) => {
         };
         notifyCounterparty(to_account, "invoice_request_created", notifyPayload).then((r) => console.log("notify result:", r)).catch((e) => console.warn("notify error:", e));
 
+        track("invoice_created", orgId, {
+          invoice_id: ref.id,
+          to_org: to_account,
+          amount,
+          item_count: (body.items || []).length,
+          invoice_number: body.invoiceNumber || "",
+        });
+
         return res.status(201).json({ id: ref.id });
       }
 
@@ -241,6 +250,12 @@ const invoiceRequestsHandler = async (req, res) => {
         notifyCounterparty(from_pan, "invoice_accepted", { invoice_id: id, by: to_pan })
           .catch((e) => console.warn("notify error:", e));
 
+        track("invoice_accepted", to_pan, {
+          invoice_id: id,
+          from_org: from_pan,
+          amount: invoiceData.grandTotal || invoiceData.amount || 0,
+        });
+
         return res.status(200).json({ ok: true });
       }
 
@@ -264,6 +279,11 @@ const invoiceRequestsHandler = async (req, res) => {
 
         notifyCounterparty(from_pan, "invoice_rejected", { invoice_id: id, by: to_pan })
           .catch((e) => console.warn("notify error:", e));
+
+        track("invoice_rejected", to_pan, {
+          invoice_id: id,
+          from_org: from_pan,
+        });
 
         return res.status(200).json({ ok: true });
       }
