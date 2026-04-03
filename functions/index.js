@@ -343,6 +343,7 @@ function exportAsHttp(name, mod, exportName) {
     }
 }
 
+exportAsHttp("guestInvoice", require("./handlers/guest_invoice"));
 exportAsHttp("auth", authModule, "auth");
 exportAsHttp("register", authModule, "register");
 exportAsHttp("inventory", inventory);
