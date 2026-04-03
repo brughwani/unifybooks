@@ -8,7 +8,6 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
         const orgDoc = await db.collection("orgs").doc(counterpartyGst).get();
         if (!orgDoc.exists) return { ok: false, reason: "counterparty not registered" };
 
-        const orgData = orgDoc.data();
         // Simplified notification logic for guest actions
         // In a real app, this would use FCM or Webhooks
         console.log(`[GuestInvoice] Notifying ${counterpartyGst} of ${eventType}:`, payload);
