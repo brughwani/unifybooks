@@ -345,6 +345,8 @@ const invoiceRequestsHandler = async (req, res) => {
         const { pan, account_number } = req.body;
         if (!pan) return res.status(400).json({ error: "pan required" });
 
+        console.log(`[Reconcile] Initiating sync for PAN: ${pan}, Account: ${account_number || "Default"}`);
+
         const Razorpay = require("razorpay");
         const instance = new Razorpay({
           key_id: process.env.RAZORPAY_KEY_ID || "dummy_key",
