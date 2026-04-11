@@ -368,12 +368,18 @@ const invoiceRequestsHandler = async (req, res) => {
         }
 
         // 2. Update status on both copies
+        const { discountAmount, cdPercentage } = calculateEffectiveCd(inv, creditSettings, now);
+        const netPaidAmount = (inv.grandTotal || inv.amount || 0) - discountAmount;
+
         const paymentUpdate = {
           paymentStatus: "paid",
           paidAt: now,
           updatedAt: now,
           paymentMethod: finalMethod,
           razorpay_transaction_id: matchedTransaction ? matchedTransaction.id : null,
+          discountAmount,
+          netPaidAmount,
+          appliedCdPercentage: cdPercentage
         };
         batch.update(db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id), paymentUpdate);
         batch.update(db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id), paymentUpdate);
@@ -391,6 +397,8 @@ const invoiceRequestsHandler = async (req, res) => {
           toOrgPan: to_pan,
           toOrgName: inv.toOrgName || "",
           amount: inv.grandTotal || inv.amount || 0,
+          discountAmount,
+          netPaidAmount,
           itemCount: (inv.items || []).length,
           createdAt: inv.createdAt || inv.created_at,
           acceptedAt: inv.acceptedAt || inv.createdAt || now,
@@ -405,17 +413,22 @@ const invoiceRequestsHandler = async (req, res) => {
         batch.set(db.collection("orgs").doc(to_pan).collection("payment_dataset").doc(id), datasetRecord);
 
         await batch.commit();
-        track("invoice_marked_paid", from_pan, { invoice_id: id, method: finalMethod, verified: !!matchedTransaction });
+        track("invoice_marked_paid", from_pan, { invoice_id: id, method: finalMethod, verified: !!matchedTransaction, discount: discountAmount });
 
         return res.status(200).json({ ok: true });
       }
 
-      // ── Reconcile via RazorpayX ─────────────────────────────────────
+      // ── Reconcile via RazorpayX (With CD Support) ──────────────────
       if (req.method === "POST" && action === "reconcile") {
         const { pan, account_number } = req.body;
         if (!pan) return res.status(400).json({ error: "pan required" });
 
         console.log(`[Reconcile] Initiating sync for PAN: ${pan}, Account: ${account_number || "Default"}`);
+
+        // Fetch Credit Settings
+        const sellerSnap = await db.collection("orgs").doc(pan).get();
+        const sellerData = sellerSnap.data() || {};
+        const creditSettings = sellerData.creditSettings || {};
 
         const Razorpay = require("razorpay");
         const instance = new Razorpay({
@@ -425,7 +438,6 @@ const invoiceRequestsHandler = async (req, res) => {
 
         // 1. Fetch accepted but unpaid invoices for this PAN (as seller)
         const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests")
-          .where("fromOrgPan", "==", pan)
           .where("status", "==", "accepted")
           .get();
 
@@ -436,25 +448,29 @@ const invoiceRequestsHandler = async (req, res) => {
         if (pendingInvoices.length === 0) return res.json({ matched_count: 0 });
 
         // 2. Fetch recent payments from Razorpay
-        // We use payments.all() which covers standard captured payments
-        const paymentsRes = await instance.payments.all({
-          count: 50,
-        });
-
+        const paymentsRes = await instance.payments.all({ count: 50 });
         const recentPayments = paymentsRes.items || [];
+        
         let matchedCount = 0;
         const now = new Date().toISOString();
         const batch = db.batch();
 
         for (const invoice of pendingInvoices) {
-          const invoiceAmountPaise = Math.round((invoice.grandTotal || invoice.amount) * 100);
+          const { discountAmount, cdPercentage } = calculateEffectiveCd(invoice, creditSettings, now);
+          const netAmount = (invoice.grandTotal || invoice.amount || 0) - discountAmount;
+          
+          const fullAmountPaise = Math.round((invoice.grandTotal || invoice.amount || 0) * 100);
+          const netAmountPaise = Math.round(netAmount * 100);
 
-          // Match based on amount and status, or specific notes
-          const match = recentPayments.find((p) =>
-            p.amount === invoiceAmountPaise &&
-            p.status === "captured" &&
-            (p.notes.invoice_id === invoice.id || p.notes.invoice_number === invoice.invoiceNumber)
-          );
+          // Match based on:
+          // a) Exact match on Total Amount
+          // b) Exact match on Net Amount (if CD applied)
+          // c) Reference IDs in notes
+          const match = recentPayments.find((p) => {
+            const amountMatches = (p.amount === fullAmountPaise || p.amount === netAmountPaise);
+            const refMatches = (p.notes.invoice_id === invoice.id || p.notes.invoice_number === invoice.invoiceNumber);
+            return p.status === "captured" && amountMatches && refMatches;
+          });
 
           if (match) {
             const update = {
@@ -462,6 +478,9 @@ const invoiceRequestsHandler = async (req, res) => {
               paidAt: now,
               updatedAt: now,
               razorpay_payment_id: match.id,
+              discountAmount,
+              netPaidAmount: match.amount / 100,
+              appliedCdPercentage: cdPercentage
             };
             batch.update(db.collection("orgs").doc(pan).collection("invoice_requests").doc(invoice.id), update);
             batch.update(db.collection("orgs").doc(invoice.toOrgPan).collection("invoice_requests").doc(invoice.id), update);
@@ -475,6 +494,8 @@ const invoiceRequestsHandler = async (req, res) => {
               toOrgPan: invoice.toOrgPan,
               toOrgName: invoice.toOrgName || "",
               amount: invoice.grandTotal || invoice.amount || 0,
+              discountAmount,
+              netPaidAmount: match.amount / 100,
               itemCount: (invoice.items || []).length,
               createdAt: invoice.createdAt || invoice.created_at,
               acceptedAt: invoice.acceptedAt || invoice.createdAt || now,
@@ -503,5 +524,40 @@ const invoiceRequestsHandler = async (req, res) => {
     }
   });
 };
+
+/**
+ * Calculates the applicable Cash Discount for an invoice.
+ */
+function calculateEffectiveCd(invoice, creditSettings, paymentDateStr) {
+  const createdAt = new Date(invoice.createdAt || invoice.created_at);
+  const paymentDate = new Date(paymentDateStr);
+  const daysElapsed = Math.floor((paymentDate - createdAt) / (1000 * 60 * 60 * 24));
+
+  const validityDays = creditSettings.cdValidityDays || 0;
+  // If payment is after CD validity window, discount is 0
+  if (validityDays > 0 && daysElapsed > validityDays) {
+    return { discountAmount: 0, cdPercentage: 0 };
+  }
+
+  const defaultCd = creditSettings.defaultCdPercentage || 0;
+  const itemCdOverrides = creditSettings.itemCdOverrides || {};
+
+  let totalDiscount = 0;
+  if (invoice.items && invoice.items.length > 0) {
+    invoice.items.forEach((item) => {
+      const itemCd = itemCdOverrides[item.itemId] !== undefined ? itemCdOverrides[item.itemId] : defaultCd;
+      // Use explicit 'total' if available, else calc price * qty
+      const itemTotal = item.total || ((item.sellingPrice || item.price || 0) * (item.quantity || 0)) || 0;
+      totalDiscount += itemTotal * (itemCd / 100);
+    });
+  } else {
+    totalDiscount = (invoice.grandTotal || invoice.amount || 0) * (defaultCd / 100);
+  }
+
+  return {
+    discountAmount: Math.round(totalDiscount * 100) / 100,
+    cdPercentage: defaultCd
+  };
+}
 
 module.exports = invoiceRequestsHandler;
