@@ -302,7 +302,6 @@ const { onRequest } = require("firebase-functions/v2/https");
 const authModule = require("./handlers/auth");
 const inventory = require("./handlers/inventory");
 const vendors = require("./handlers/vendors");
-const transactions = require("./handlers/transactions");
 const invoiceRequests = require("./handlers/invoiceRequests");
 
 // Export each handler as a separate Cloud Function
@@ -348,5 +347,6 @@ exportAsHttp("auth", authModule, "auth");
 exportAsHttp("register", authModule, "register");
 exportAsHttp("inventory", inventory);
 exportAsHttp("vendors", vendors);
-exportAsHttp("transactions", transactions);
+exportAsHttp("createRazorpayOrder", require("./handlers/razorpay"), "createOrder");
+exportAsHttp("verifyRazorpayPayment", require("./handlers/razorpay"), "verifyPayment");
 exportAsHttp("invoiceRequests", invoiceRequests);

@@ -288,6 +288,141 @@ const invoiceRequestsHandler = async (req, res) => {
         return res.status(200).json({ ok: true });
       }
 
+      // ── Mark as Paid ────────────────────────────────────────────────
+      if (req.method === "POST" && action === "markpaid") {
+        const { id, from_pan, to_pan, payment_method } = req.body;
+        if (!id || !from_pan || !to_pan) {
+          return res.status(400).json({ error: "id, from_pan and to_pan required" });
+        }
+
+        const now = new Date().toISOString();
+        const batch = db.batch();
+
+        // 1. Fetch invoice to get metadata for dataset
+        const invRef = db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id);
+        const invSnap = await invRef.get();
+        if (!invSnap.exists) return res.status(404).json({ error: "Invoice not found" });
+        const inv = invSnap.data();
+
+        // 2. Update status on both copies
+        const paymentUpdate = { paymentStatus: "paid", paidAt: now, updatedAt: now };
+        batch.update(db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id), paymentUpdate);
+        batch.update(db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id), paymentUpdate);
+
+        // 3. Write to payment_dataset for both parties
+        const createdAt = new Date(inv.createdAt || inv.created_at);
+        const acceptedAt = inv.acceptedAt ? new Date(inv.acceptedAt) : new Date();
+        const paidAtDate = new Date(now);
+
+        const datasetRecord = {
+          invoiceId: id,
+          invoiceNumber: inv.invoiceNumber || "",
+          fromOrgPan: from_pan,
+          fromOrgName: inv.fromOrgName || "",
+          toOrgPan: to_pan,
+          toOrgName: inv.toOrgName || "",
+          amount: inv.grandTotal || inv.amount || 0,
+          itemCount: (inv.items || []).length,
+          createdAt: inv.createdAt || inv.created_at,
+          acceptedAt: inv.acceptedAt || inv.createdAt || now,
+          paidAt: now,
+          daysToAccept: Math.max(0, Math.floor((acceptedAt - createdAt) / (1000 * 60 * 60 * 24))),
+          daysToPay: Math.max(0, Math.floor((paidAtDate - createdAt) / (1000 * 60 * 60 * 24))),
+          paymentMethod: payment_method || "manual",
+        };
+
+        batch.set(db.collection("orgs").doc(from_pan).collection("payment_dataset").doc(id), datasetRecord);
+        batch.set(db.collection("orgs").doc(to_pan).collection("payment_dataset").doc(id), datasetRecord);
+
+        await batch.commit();
+        track("invoice_marked_paid", from_pan, { invoice_id: id, method: payment_method });
+
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Reconcile via RazorpayX ─────────────────────────────────────
+      if (req.method === "POST" && action === "reconcile") {
+        const { pan, account_number } = req.body;
+        if (!pan) return res.status(400).json({ error: "pan required" });
+
+        const Razorpay = require("razorpay");
+        const instance = new Razorpay({
+          key_id: process.env.RAZORPAY_KEY_ID || "dummy_key",
+          key_secret: process.env.RAZORPAY_KEY_SECRET || "dummy_secret",
+        });
+
+        // 1. Fetch accepted but unpaid invoices for this PAN (as seller)
+        const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests")
+          .where("fromOrgPan", "==", pan)
+          .where("status", "==", "accepted")
+          .get();
+
+        const pendingInvoices = snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((inv) => inv.paymentStatus !== "paid");
+
+        if (pendingInvoices.length === 0) return res.json({ matched_count: 0 });
+
+        // 2. Fetch recent payments from Razorpay
+        // We use payments.all() which covers standard captured payments
+        const paymentsRes = await instance.payments.all({
+          count: 50,
+        });
+
+        const recentPayments = paymentsRes.items || [];
+        let matchedCount = 0;
+        const now = new Date().toISOString();
+        const batch = db.batch();
+
+        for (const invoice of pendingInvoices) {
+          const invoiceAmountPaise = Math.round((invoice.grandTotal || invoice.amount) * 100);
+
+          // Match based on amount and status, or specific notes
+          const match = recentPayments.find((p) =>
+            p.amount === invoiceAmountPaise &&
+            p.status === "captured" &&
+            (p.notes.invoice_id === invoice.id || p.notes.invoice_number === invoice.invoiceNumber)
+          );
+
+          if (match) {
+            const update = {
+              paymentStatus: "paid",
+              paidAt: now,
+              updatedAt: now,
+              razorpay_payment_id: match.id,
+            };
+            batch.update(db.collection("orgs").doc(pan).collection("invoice_requests").doc(invoice.id), update);
+            batch.update(db.collection("orgs").doc(invoice.toOrgPan).collection("invoice_requests").doc(invoice.id), update);
+
+            // Dataset record
+            const datasetRecord = {
+              invoiceId: invoice.id,
+              invoiceNumber: invoice.invoiceNumber || "",
+              fromOrgPan: pan,
+              fromOrgName: invoice.fromOrgName || "",
+              toOrgPan: invoice.toOrgPan,
+              toOrgName: invoice.toOrgName || "",
+              amount: invoice.grandTotal || invoice.amount || 0,
+              itemCount: (invoice.items || []).length,
+              createdAt: invoice.createdAt || invoice.created_at,
+              acceptedAt: invoice.acceptedAt || invoice.createdAt || now,
+              paidAt: now,
+              paymentMethod: "razorpay",
+              razorpay_payment_id: match.id,
+            };
+            batch.set(db.collection("orgs").doc(pan).collection("payment_dataset").doc(invoice.id), datasetRecord);
+            batch.set(db.collection("orgs").doc(invoice.toOrgPan).collection("payment_dataset").doc(invoice.id), datasetRecord);
+
+            matchedCount++;
+          }
+        }
+
+        if (matchedCount > 0) await batch.commit();
+
+        track("reconciliation_synced", pan, { matched_count: matchedCount });
+        return res.json({ matched_count: matchedCount });
+      }
+
       return res.status(405).json({ error: "Method not allowed or missing action" });
 
     } catch (err) {

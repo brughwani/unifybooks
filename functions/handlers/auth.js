@@ -228,8 +228,12 @@ const authHandler = async (req, res) => {
 
 function validateRegisterPayload(body) {
   const errors = [];
+  const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/i;
+
   if (!body.phone) errors.push("phone is required");
   if (!body.pan) errors.push("pan is required");
+  else if (!panRegex.test(body.pan)) errors.push("pan must be exactly 10 characters in Indian format (e.g. ABCDE1234F)");
+
   if (!body.owner_name && !body.ownerName) errors.push("owner_name is required");
   if (!body.shop_name && !body.shopName && !body.firm_name) errors.push("shop_name is required");
   return errors;
