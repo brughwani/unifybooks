@@ -93,34 +93,61 @@ const invoiceRequestsHandler = async (req, res) => {
           return res.status(400).json({ error: "from_account, to_account and numeric amount required" });
         }
 
-        // Use from_account (PAN) instead of user.uid
-        const orgId = from_account;
+        // ── ENFORCE SUPPLY BLOCK & CREDIT TERMS ──
+        const senderSnap = await db.collection("orgs").doc(from_account).get();
+        const senderData = senderSnap.data() || {};
+        const creditSettings = senderData.creditSettings || {};
+
+        if (creditSettings.supplyBlockDays) {
+          const blockThreshold = new Date();
+          blockThreshold.setDate(blockThreshold.getDate() - creditSettings.supplyBlockDays);
+
+          const overdueSnap = await db.collection("orgs").doc(from_account).collection("invoice_requests")
+            .where("toOrgPan", "==", to_account)
+            .where("status", "==", "accepted")
+            .where("paymentStatus", "!=", "paid")
+            .where("createdAt", "<", blockThreshold.toISOString())
+            .limit(1)
+            .get();
+
+          if (!overdueSnap.empty) {
+            return res.status(403).json({
+              error: "Supply Blocked",
+              message: `Your credit policy blocks supply to this buyer due to outstanding invoices older than ${creditSettings.supplyBlockDays} days.`
+            });
+          }
+        }
+
+        let dueDate = null;
+        if (creditSettings.creditDurationDays) {
+          const d = new Date();
+          d.setDate(d.getDate() + creditSettings.creditDurationDays);
+          dueDate = d.toISOString();
+        }
 
         // Store ALL fields from the Flutter payload + CF fields for backwards compat
         const data = {
           // Cloud Function field names
-          from_org: orgId,
-          to_org: to_account,
+          from_org: from_account,
+          to_org: (body.toOrgPan || to_account),
           amount,
-          description: description,
+          description: (body.notes || description),
           status: body.status || "pending",
           created_at: new Date().toISOString(),
-          // Flutter field names (so fromMap works directly)
+          due_date: dueDate,
+          // Flutter field names
           fromOrgPan: from_account,
-          fromOrgName: body.fromOrgName || "",
-          toOrgPan: to_account,
-          toOrgName: body.toOrgName || "",
+          fromOrgName: (body.fromOrgName || ""),
+          toOrgPan: (body.toOrgPan || to_account),
+          toOrgName: (body.toOrgName || ""),
           items: body.items || [],
-          subtotal: body.subtotal || 0,
-          gst: body.gst || 0,
+          subtotal: (body.subtotal || 0),
+          gst: (body.gst || 0),
           grandTotal: amount,
-          createdAt: new Date().toISOString(),
+          notes: (body.notes || description),
           invoiceNumber: body.invoiceNumber || "",
-          notes: description,
-          driverName: body.driverName || null,
-          driverPhone: body.driverPhone || null,
-          vehicleNumber: body.vehicleNumber || null,
-          paymentStatus: body.paymentStatus || "",
+          invoiceType: body.invoiceType || "sale",
+          paymentStatus: body.paymentStatus || "unpaid",
           disputeStatus: body.disputeStatus || "",
         };
         const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
@@ -288,7 +315,7 @@ const invoiceRequestsHandler = async (req, res) => {
         return res.status(200).json({ ok: true });
       }
 
-      // ── Mark as Paid ────────────────────────────────────────────────
+      // ── Mark as Paid (Partial Automation) ──────────────────────────
       if (req.method === "POST" && action === "markpaid") {
         const { id, from_pan, to_pan, payment_method } = req.body;
         if (!id || !from_pan || !to_pan) {
@@ -304,8 +331,50 @@ const invoiceRequestsHandler = async (req, res) => {
         if (!invSnap.exists) return res.status(404).json({ error: "Invoice not found" });
         const inv = invSnap.data();
 
+        // PARTIAL AUTOMATION: Search bank statement for matching transaction
+        let matchedTransaction = null;
+        let finalMethod = payment_method || "manual";
+
+        try {
+          const sellerSnap = await db.collection("orgs").doc(from_pan).get();
+          const sellerData = sellerSnap.data() || {};
+          const accountNumber = req.body.account_number || sellerData.bankDetails?.accountNumber;
+
+          if (accountNumber && process.env.RAZORPAY_KEY_ID) {
+            const authStr = `${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`;
+            const auth = Buffer.from(authStr).toString("base64");
+            const response = await fetch(`https://api.razorpay.com/v1/transactions?account_number=${accountNumber}&count=20`, {
+              headers: { "Authorization": `Basic ${auth}` }
+            });
+            const txData = await response.json();
+            const transactions = txData.items || [];
+
+            const invoiceAmountPaise = Math.round((inv.grandTotal || inv.amount || 0) * 100);
+
+            // Look for a credit transaction with matching amount (processed state)
+            matchedTransaction = transactions.find((tx) =>
+              tx.amount === invoiceAmountPaise &&
+              tx.type === "credit" &&
+              tx.status === "processed"
+            );
+
+            if (matchedTransaction) {
+              finalMethod = "razorpay_verified";
+              console.log(`[markpaid] Successfully verified invoice ${id} against bank transaction ${matchedTransaction.id}`);
+            }
+          }
+        } catch (e) {
+          console.error("[markpaid] Bank statement search failed:", e);
+        }
+
         // 2. Update status on both copies
-        const paymentUpdate = { paymentStatus: "paid", paidAt: now, updatedAt: now };
+        const paymentUpdate = {
+          paymentStatus: "paid",
+          paidAt: now,
+          updatedAt: now,
+          paymentMethod: finalMethod,
+          razorpay_transaction_id: matchedTransaction ? matchedTransaction.id : null,
+        };
         batch.update(db.collection("orgs").doc(from_pan).collection("invoice_requests").doc(id), paymentUpdate);
         batch.update(db.collection("orgs").doc(to_pan).collection("invoice_requests").doc(id), paymentUpdate);
 
@@ -328,14 +397,15 @@ const invoiceRequestsHandler = async (req, res) => {
           paidAt: now,
           daysToAccept: Math.max(0, Math.floor((acceptedAt - createdAt) / (1000 * 60 * 60 * 24))),
           daysToPay: Math.max(0, Math.floor((paidAtDate - createdAt) / (1000 * 60 * 60 * 24))),
-          paymentMethod: payment_method || "manual",
+          paymentMethod: finalMethod,
+          razorpay_transaction_id: matchedTransaction ? matchedTransaction.id : null,
         };
 
         batch.set(db.collection("orgs").doc(from_pan).collection("payment_dataset").doc(id), datasetRecord);
         batch.set(db.collection("orgs").doc(to_pan).collection("payment_dataset").doc(id), datasetRecord);
 
         await batch.commit();
-        track("invoice_marked_paid", from_pan, { invoice_id: id, method: payment_method });
+        track("invoice_marked_paid", from_pan, { invoice_id: id, method: finalMethod, verified: !!matchedTransaction });
 
         return res.status(200).json({ ok: true });
       }
