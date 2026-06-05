@@ -273,8 +273,8 @@ exports.register = async (req, res) => {
       }
 
       // Step 2: Create/update Firestore org document (AFTER auth succeeds)
-      console.log(`[Register] Writing Firestore doc: orgs/${uid}`);
-      await db.collection("orgs").doc(uid).set(
+      console.log(`[Register] Writing Firestore doc: orgs/${pan}`);
+      await db.collection("orgs").doc(pan).set(
         {
           pan,
           ...(gst ? { gst } : {}),
@@ -283,6 +283,16 @@ exports.register = async (req, res) => {
           shop_name: shopName,
           address: address,
           created_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      console.log(`[Register] Writing lightweight link reference: orgs/${uid}`);
+      await db.collection("orgs").doc(uid).set(
+        {
+          pan,
+          uid,
+          phone,
         },
         { merge: true }
       );

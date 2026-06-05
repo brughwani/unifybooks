@@ -22,16 +22,20 @@ const inventoryHandler = async (req, res) => {
   if (!user) return;
   const orgId = user.uid;
 
+  // Resolve the user's PAN from their UID
+  const orgDoc = await db.collection("orgs").doc(orgId).get();
+  const userPan = orgDoc.exists ? orgDoc.data().pan : orgId;
+
   try {
     const { action } = req.query;
     if (req.method === "POST" && action === "create") {
       const data = { ...req.body, created_at: new Date().toISOString() };
-      const ref = await db.collection("orgs").doc(orgId).collection("items").add(data);
-      track("inventory_item_added", orgId, { item_id: ref.id, item_name: req.body.name || "" });
+      const ref = await db.collection("orgs").doc(userPan).collection("items").add(data);
+      track("inventory_item_added", userPan, { item_id: ref.id, item_name: req.body.name || "" });
       return res.status(201).json({ id: ref.id });
     }
     if (req.method === "GET" && action === "list") {
-      const snapshot = await db.collection("orgs").doc(orgId).collection("items").get();
+      const snapshot = await db.collection("orgs").doc(userPan).collection("items").get();
       return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
     }
     return res.status(405).json({ error: "Method not allowed or missing action" });

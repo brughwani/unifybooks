@@ -101,6 +101,14 @@ service cloud.firestore {
         // No deletes
         allow delete: if false;
       }
+
+      // Invoice requests subcollection (used by prod mode direct-Firestore writes like proposal/approval of amendments)
+      match /invoice_requests/{invoiceId} {
+        allow create: if isAuthenticated();
+        allow read: if isAuthenticated();
+        allow update: if isAuthenticated();
+        allow delete: if false;
+      }
       
       // Counters subcollection (invoice number generator — prod only)
       match /counters/{counterId} {

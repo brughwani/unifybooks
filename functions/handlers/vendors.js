@@ -57,6 +57,10 @@ const vendorsHandler = async (req, res) => {
   if (!user) return;
   const orgId = user.uid;
 
+  // Resolve the user's PAN from their UID
+  const orgDoc = await db.collection("orgs").doc(orgId).get();
+  const userPan = orgDoc.exists ? orgDoc.data().pan : orgId;
+
   try {
     const { action } = req.query;
     if (req.method === "POST" && action === "create") {
@@ -74,9 +78,9 @@ const vendorsHandler = async (req, res) => {
       };
 
       const data = { ...vendor };
-      const ref = await db.collection("orgs").doc(orgId).collection("accounts").add(data);
-      await db.collection("orgs").doc(orgId).collection("ledgers").doc(ref.id).set({ entries: [] });
-      track("vendor_added", orgId, { vendor_pan: vendor.pan, vendor_shop: vendor.shop_name });
+      const ref = await db.collection("orgs").doc(userPan).collection("accounts").add(data);
+      await db.collection("orgs").doc(userPan).collection("ledgers").doc(ref.id).set({ entries: [] });
+      track("vendor_added", userPan, { vendor_pan: vendor.pan, vendor_shop: vendor.shop_name });
       return res.status(201).json({ id: ref.id });
     }
 
@@ -84,7 +88,7 @@ const vendorsHandler = async (req, res) => {
 
 
     if (req.method === "GET" && action === "list") {
-      const snapshot = await db.collection("orgs").doc(orgId).collection("accounts").get();
+      const snapshot = await db.collection("orgs").doc(userPan).collection("accounts").get();
       return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
     }
     return res.status(405).json({ error: "Method not allowed or missing action" });

@@ -25,7 +25,12 @@ const transactionsHandler = async (req, res) => {
     const { action, account_id } = req.query;
     if (req.method === "GET" && action === "get") {
       if (!account_id) return res.status(400).json({ error: "account_id required" });
-      const docSnap = await db.collection("orgs").doc(orgId).collection("ledgers").doc(account_id).get();
+
+      // Resolve the user's PAN from their UID
+      const orgDoc = await db.collection("orgs").doc(orgId).get();
+      const userPan = orgDoc.exists ? orgDoc.data().pan : orgId;
+
+      const docSnap = await db.collection("orgs").doc(userPan).collection("ledgers").doc(account_id).get();
       if (!docSnap.exists) return res.json({ entries: [] });
       return res.json(docSnap.data());
     }

@@ -75,9 +75,46 @@ async function notifyCounterparty(counterpartyGst, eventType, payload) {
 
 const invoiceRequestsHandler = async (req, res) => {
   return cors(req, res, async () => {
+    const { action } = req.query;
+
+    if (action === "migrate_data") {
+      try {
+        const orgsSnap = await db.collection("orgs").get();
+        let migratedDocsCount = 0;
+
+        for (const orgDoc of orgsSnap.docs) {
+          const orgId = orgDoc.id;
+          if (orgId.startsWith("phone:")) {
+            const orgData = orgDoc.data();
+            const pan = orgData.pan;
+            if (!pan) continue;
+
+            const subcollections = await orgDoc.ref.listCollections();
+            for (const subcoll of subcollections) {
+              const subcollId = subcoll.id;
+              const docsSnap = await subcoll.get();
+              for (const doc of docsSnap.docs) {
+                const data = doc.data();
+                await db.collection("orgs").doc(pan).collection(subcollId).doc(doc.id).set(data, { merge: true });
+                migratedDocsCount++;
+              }
+            }
+          }
+        }
+        return res.status(200).json({ success: true, migratedDocsCount });
+      } catch (err) {
+        console.error("Migration error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     const user = await requireAuth(req, res);
     if (!user) return;
     const orgId = user.uid;
+
+    // Resolve the user's PAN from their UID
+    const orgDoc = await db.collection("orgs").doc(orgId).get();
+    const userPan = orgDoc.exists ? orgDoc.data().pan : orgId;
 
     try {
       const { action } = req.query;
@@ -150,12 +187,12 @@ const invoiceRequestsHandler = async (req, res) => {
           paymentStatus: body.paymentStatus || "unpaid",
           disputeStatus: body.disputeStatus || "",
         };
-        const ref = await db.collection("orgs").doc(orgId).collection("invoice_requests").add(data);
+        const ref = await db.collection("orgs").doc(from_account).collection("invoice_requests").add(data);
 
         // Also write a copy to the counterparty's invoice_requests so they can query it
         await db.collection("orgs").doc(to_account).collection("invoice_requests").doc(ref.id).set(data);
 
-        await db.collection("orgs").doc(orgId).collection("ledgers").doc(to_account).set({
+        await db.collection("orgs").doc(from_account).collection("ledgers").doc(to_account).set({
           entries: FieldValue.arrayUnion({
             id: `inv_${ref.id}`,
             type: "debit",
@@ -163,14 +200,14 @@ const invoiceRequestsHandler = async (req, res) => {
             description: description || "",
             date: new Date().toISOString(),
             reference: ref.id,
-            from: orgId,
+            from: from_account,
             to: to_account
           })
         }, { merge: true });
 
         const counterpartyDoc = await db.collection("orgs").doc(to_account).get();
         if (counterpartyDoc.exists) {
-          await db.collection("orgs").doc(to_account).collection("ledgers").doc(orgId).set({
+          await db.collection("orgs").doc(to_account).collection("ledgers").doc(from_account).set({
             entries: FieldValue.arrayUnion({
               id: `inv_${ref.id}`,
               type: "credit",
@@ -178,14 +215,14 @@ const invoiceRequestsHandler = async (req, res) => {
               description: description || "",
               date: new Date().toISOString(),
               reference: ref.id,
-              from: orgId,
+              from: from_account,
               to: to_account
             })
           }, { merge: true });
 
-          const edgeId = orgId < to_account ? `${orgId}_${to_account}` : `${to_account}_${orgId}`;
+          const edgeId = from_account < to_account ? `${from_account}_${to_account}` : `${to_account}_${from_account}`;
           await db.collection("network_edges").doc(edgeId).set({
-            a: orgId,
+            a: from_account,
             b: to_account,
             last_txn: new Date().toISOString(),
             total_volume: FieldValue.increment(amount)
@@ -194,14 +231,14 @@ const invoiceRequestsHandler = async (req, res) => {
 
         const notifyPayload = {
           invoice_id: ref.id,
-          from: orgId,
+          from: from_account,
           to: to_account,
           amount,
           description: description || ""
         };
         notifyCounterparty(to_account, "invoice_request_created", notifyPayload).then((r) => console.log("notify result:", r)).catch((e) => console.warn("notify error:", e));
 
-        track("invoice_created", orgId, {
+        track("invoice_created", from_account, {
           invoice_id: ref.id,
           to_org: to_account,
           amount,
@@ -213,16 +250,16 @@ const invoiceRequestsHandler = async (req, res) => {
       }
 
       if (req.method === "GET" && action === "list") {
-        // Use PAN from query param if provided, otherwise fall back to user.uid
-        const pan = req.query.pan || orgId;
+        // Use PAN from query param if provided, otherwise fall back to user's resolved PAN
+        const pan = req.query.pan || userPan;
         const snapshot = await db.collection("orgs").doc(pan).collection("invoice_requests").get();
         return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       }
 
       // Counterparty can fetch invoices sent TO them
       if (req.method === "GET" && action === "incoming") {
-        const snapshot = await db.collection("orgs").doc(orgId).collection("invoice_requests")
-          .where("to_org", "==", orgId)
+        const snapshot = await db.collection("orgs").doc(userPan).collection("invoice_requests")
+          .where("to_org", "==", userPan)
           .get();
         return res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       }
@@ -331,13 +368,16 @@ const invoiceRequestsHandler = async (req, res) => {
         if (!invSnap.exists) return res.status(404).json({ error: "Invoice not found" });
         const inv = invSnap.data();
 
+        // Fetch seller details (credit settings and bank details)
+        const sellerSnap = await db.collection("orgs").doc(from_pan).get();
+        const sellerData = sellerSnap.data() || {};
+        const creditSettings = sellerData.creditSettings || {};
+
         // PARTIAL AUTOMATION: Search bank statement for matching transaction
         let matchedTransaction = null;
         let finalMethod = payment_method || "manual";
 
         try {
-          const sellerSnap = await db.collection("orgs").doc(from_pan).get();
-          const sellerData = sellerSnap.data() || {};
           const accountNumber = req.body.account_number || sellerData.bankDetails?.accountNumber;
 
           if (accountNumber && process.env.RAZORPAY_KEY_ID) {
