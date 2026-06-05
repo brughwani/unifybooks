@@ -106,6 +106,27 @@ const invoiceRequestsHandler = async (req, res) => {
         console.error("Migration error:", err);
         return res.status(500).json({ error: err.message });
       }
+    if (action === "query_data") {
+      try {
+        const orgsSnap = await db.collection("orgs").get();
+        const result = {};
+        for (const orgDoc of orgsSnap.docs) {
+          const orgId = orgDoc.id;
+          result[orgId] = {
+            profile: orgDoc.data(),
+            inventory: [],
+            invoice_requests: []
+          };
+          const invSnap = await db.collection("orgs").doc(orgId).collection("inventory").get();
+          invSnap.forEach(d => result[orgId].inventory.push({ id: d.id, ...d.data() }));
+
+          const reqSnap = await db.collection("orgs").doc(orgId).collection("invoice_requests").get();
+          reqSnap.forEach(d => result[orgId].invoice_requests.push({ id: d.id, ...d.data() }));
+        }
+        return res.status(200).json(result);
+      } catch (err) {
+        return res.status(500).json({ error: err.message });
+      }
     }
 
     const user = await requireAuth(req, res);
